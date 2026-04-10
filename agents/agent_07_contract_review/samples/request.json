@@ -1,0 +1,10 @@
+{
+  "correlation_id": "contract_review-sample-001",
+  "payload": {
+    "contract_name": "MSA Draft",
+    "counterparty": "Vendor Inc"
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

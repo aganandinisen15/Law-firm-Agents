@@ -1,0 +1,20 @@
+{
+  "correlation_id": "email-triage-live-sample-001",
+  "payload": {
+    "email_id": "gmail-msg-001",
+    "thread_id": "gmail-thread-001",
+    "from": "client@example.com",
+    "subject": "Urgent: hearing notice received for 01/20/2026",
+    "body": "Hi team, we just received a hearing notice and need guidance ASAP. Please review the attached court order and let us know the next steps. The hearing is on 01/20/2026.",
+    "attachments": [
+      {
+        "filename": "hearing_notice.pdf",
+        "mime_type": "application/pdf"
+      }
+    ]
+  },
+  "metadata": {
+    "source": "gmail_webhook",
+    "mailbox": "inbox"
+  }
+}

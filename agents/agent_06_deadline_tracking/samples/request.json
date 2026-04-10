@@ -1,0 +1,11 @@
+{
+  "correlation_id": "deadline_tracking-sample-001",
+  "payload": {
+    "matter_id": 1,
+    "deadline_date": "2026-01-30",
+    "description": "Interrogatory responses due"
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "correlation_id": "calendar_scheduling-sample-001",
+  "payload": {
+    "title": "Client Meeting",
+    "attendees": [
+      {
+        "name": "Client",
+        "email": "client@example.com"
+      }
+    ],
+    "proposed_times": [
+      "2026-01-20T10:00:00",
+      "2026-01-20T14:00:00"
+    ]
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "correlation_id": "memo_drafting-sample-001",
+  "payload": {
+    "verified_citations": [
+      {
+        "citation": "123 Cal.App.4th 456",
+        "quote": "Sample quote"
+      }
+    ]
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

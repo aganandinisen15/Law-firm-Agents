@@ -1,0 +1,14 @@
+{
+  "correlation_id": "document_organization-sample-001",
+  "payload": {
+    "filename": "motion.pdf",
+    "client_name": "Smith Co",
+    "matter_name": "Smith v Jones",
+    "document_type": "motion",
+    "document_date": "2026-01-15",
+    "description": "SummaryJudgment"
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

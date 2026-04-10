@@ -1,0 +1,10 @@
+{
+  "correlation_id": "legal_research-sample-001",
+  "payload": {
+    "research_question": "Can an LLC operating agreement restrict member voting rights in California?",
+    "jurisdiction": "California"
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

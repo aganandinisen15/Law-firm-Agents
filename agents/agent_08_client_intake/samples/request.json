@@ -1,0 +1,10 @@
+{
+  "correlation_id": "client_intake-sample-001",
+  "payload": {
+    "client_name": "Acme Corp",
+    "matter_type": "corporate"
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

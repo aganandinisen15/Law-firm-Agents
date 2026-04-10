@@ -1,0 +1,14 @@
+{
+  "correlation_id": "task_priority-sample-001",
+  "payload": {
+    "title": "Review discovery requests",
+    "due_date": "2026-01-25",
+    "tags": [
+      "deadline",
+      "court"
+    ]
+  },
+  "metadata": {
+    "source": "manual"
+  }
+}

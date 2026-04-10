@@ -1,0 +1,502 @@
+from __future__ import annotations
+
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
+
+from agents.agent_02_calendar_scheduling.app.processor import process as process_calendar
+from agents.agent_03_task_priority.app.processor import process as process_task
+from shared.legal_agents.adapters import GoogleWorkspaceAdapter
+from shared.legal_agents.base_agent import build_router
+from shared.legal_agents.db import engine
+from shared.legal_agents.logging_utils import configure_logging
+from shared.legal_agents.schemas import GenericAgentRequest
+from shared.legal_agents.settings import settings
+from .processor import process
+
+configure_logging(settings.log_level)
+
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+google_adapter = GoogleWorkspaceAdapter()
+
+app = FastAPI(
+    title="LexFlow Email Triage Admin",
+    version="4.0.0",
+    description="Admin console for Gmail-driven legal email triage, routing, and response drafting.",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.include_router(build_router("email_triage", "Email Triage Agent", process))
+
+
+class GmailWatcher:
+    def __init__(self, adapter: GoogleWorkspaceAdapter):
+        self.adapter = adapter
+        self.running = False
+        self.poll_seconds = 30
+        self.query = settings.gmail_default_query
+        self.thread: Optional[threading.Thread] = None
+        self.stop_event = threading.Event()
+        self.lock = threading.Lock()
+        self.last_checked_at: Optional[str] = None
+        self.last_processed_at: Optional[str] = None
+        self.last_error: Optional[str] = None
+        self.last_message_id: Optional[str] = None
+        self.processed_session_count = 0
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self.lock:
+            return {
+                "running": self.running,
+                "poll_seconds": self.poll_seconds,
+                "query": self.query,
+                "last_checked_at": self.last_checked_at,
+                "last_processed_at": self.last_processed_at,
+                "last_error": self.last_error,
+                "last_message_id": self.last_message_id,
+                "processed_session_count": self.processed_session_count,
+            }
+
+    def configure(self, poll_seconds: Optional[int] = None, query: Optional[str] = None) -> None:
+        with self.lock:
+            if poll_seconds:
+                self.poll_seconds = max(10, min(int(poll_seconds), 300))
+            if query is not None:
+                self.query = query.strip() or settings.gmail_default_query
+
+    def start(self, poll_seconds: Optional[int] = None, query: Optional[str] = None) -> Dict[str, Any]:
+        self.configure(poll_seconds, query)
+        with self.lock:
+            if self.running:
+                return self.snapshot()
+            self.running = True
+            self.stop_event.clear()
+            self.thread = threading.Thread(target=self._loop, daemon=True, name="gmail-watcher")
+            self.thread.start()
+            return self.snapshot()
+
+    def stop(self) -> Dict[str, Any]:
+        with self.lock:
+            self.running = False
+            self.stop_event.set()
+        return self.snapshot()
+
+    def run_once(self) -> Dict[str, Any]:
+        try:
+            payload = _find_latest_unprocessed_message(max_results=10, query=self.query)
+            checked_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            with self.lock:
+                self.last_checked_at = checked_at
+            if not payload:
+                return {"processed": False, "message": None, "checked_at": checked_at}
+            workflow = _workflow_result(payload)
+            with self.lock:
+                self.last_processed_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                self.last_message_id = payload.get("gmail_message_id") or payload.get("email_id")
+                self.processed_session_count += 1
+                self.last_error = None
+            return {"processed": True, "message": payload, "workflow": workflow, "checked_at": checked_at}
+        except Exception as exc:  # pragma: no cover
+            with self.lock:
+                self.last_error = str(exc)
+                self.last_checked_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            raise
+
+    def _loop(self) -> None:
+        while not self.stop_event.wait(self.poll_seconds):
+            if not self.running:
+                break
+            try:
+                self.run_once()
+            except Exception:
+                pass
+
+
+watcher = GmailWatcher(google_adapter)
+
+
+def _looks_like_scheduling(text_value: str) -> bool:
+    lower = (text_value or "").lower()
+    keywords = ["schedule", "meeting", "call", "availability", "calendar", "zoom"]
+    return any(word in lower for word in keywords)
+
+
+def _dashboard_metrics() -> Dict[str, Any]:
+    with engine.begin() as conn:
+        email_metrics = conn.execute(
+            text(
+                """
+                SELECT
+                  COUNT(*) AS total_processed,
+                  COUNT(*) FILTER (WHERE urgency_score >= :urgent_threshold) AS urgent_count,
+                  COUNT(*) FILTER (WHERE draft_created IS TRUE) AS drafts_created,
+                  COUNT(*) FILTER (WHERE category = 'COURT') AS court_count,
+                  COUNT(*) FILTER (WHERE category = 'NEEDS_MANUAL_REVIEW') AS manual_review_count
+                FROM email_log
+                """
+            ),
+            {"urgent_threshold": settings.email_triage_urgent_threshold},
+        ).mappings().one()
+        task_metrics = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS total_tasks,
+                       COUNT(*) FILTER (WHERE status = 'pending') AS pending_tasks,
+                       COALESCE(MAX(priority_score), 0) AS top_priority
+                FROM tasks
+                """
+            )
+        ).mappings().one()
+        meeting_metrics = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS total_meetings,
+                       COUNT(*) FILTER (WHERE status = 'tentative') AS tentative_meetings,
+                       COUNT(*) FILTER (WHERE scheduled_time::date >= CURRENT_DATE) AS upcoming_meetings
+                FROM meetings
+                """
+            )
+        ).mappings().one()
+        deadline_metrics = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS total_deadlines,
+                       COUNT(*) FILTER (WHERE status = 'upcoming') AS upcoming_deadlines
+                FROM deadlines
+                """
+            )
+        ).mappings().one()
+    return {
+        "emails": dict(email_metrics),
+        "tasks": dict(task_metrics),
+        "meetings": dict(meeting_metrics),
+        "deadlines": dict(deadline_metrics),
+    }
+
+
+def _normalize_email_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "email_id": payload.get("email_id") or payload.get("gmail_message_id"),
+        "gmail_message_id": payload.get("gmail_message_id") or payload.get("email_id"),
+        "thread_id": payload.get("thread_id"),
+        "from": payload.get("from") or payload.get("sender") or "",
+        "subject": payload.get("subject") or "",
+        "body": payload.get("body") or payload.get("snippet") or "",
+        "attachments": payload.get("attachments") or [],
+        "metadata": payload.get("metadata") or {},
+    }
+
+
+def _find_latest_unprocessed_message(max_results: int = 10, query: str | None = None) -> Dict[str, Any] | None:
+    inbox = google_adapter.list_inbox_messages(max_results=max_results, query=query or "")
+    items = inbox.get("items", [])
+    if not items:
+        return None
+
+    message_ids = [item.get("gmail_message_id") for item in items if item.get("gmail_message_id")]
+    processed_ids: set[str] = set()
+    if message_ids:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("SELECT email_id FROM email_log WHERE email_id = ANY(:ids)"),
+                {"ids": message_ids},
+            ).fetchall()
+        processed_ids = {row[0] for row in rows}
+
+    for item in items:
+        message_id = item.get("gmail_message_id")
+        if message_id and message_id not in processed_ids:
+            return item
+    return None
+
+
+def _triage_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+    email_payload = _normalize_email_payload(payload)
+    result = process(GenericAgentRequest(payload=email_payload, metadata=payload.get("metadata") or {}))
+    return {
+        "status": "ok",
+        "summary": result.get("summary", "Email processed."),
+        "data": result,
+    }
+
+
+def _create_deadline_if_needed(payload: Dict[str, Any], triage_response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    deadline = triage_response.get("deadline")
+    if not deadline:
+        return None
+    if triage_response.get("category") != "COURT":
+        return None
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    INSERT INTO deadlines (deadline_type, deadline_date, description, source, reminder_schedule, status)
+                    VALUES (:deadline_type, :deadline_date, :description, :source, CAST(:reminder_schedule AS JSONB), :status)
+                    RETURNING deadline_id
+                    """
+                ),
+                {
+                    "deadline_type": "court",
+                    "deadline_date": deadline,
+                    "description": f"Court communication: {payload.get('subject', 'Untitled')}",
+                    "reminder_schedule": '{"default": [14, 7, 3, 1]}',
+                    "source": "email_triage",
+                    "status": "upcoming",
+                },
+            ).mappings().one()
+        return {"deadline_id": row["deadline_id"], "deadline": deadline}
+    except Exception:
+        return None
+
+
+def _workflow_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+    triage_response = _triage_result(payload)["data"]
+    body = f"{payload.get('subject', '')}\n\n{payload.get('body', '')}"
+
+    tasks: List[Dict[str, Any]] = []
+    for idx, action_item in enumerate(triage_response.get("action_items", [])[:3], start=1):
+        tags = ["email", triage_response.get("category", "CLIENT_ROUTINE").lower()]
+        if triage_response.get("deadline"):
+            tags.append("deadline")
+        if triage_response.get("urgency_score", 0) >= settings.email_triage_urgent_threshold:
+            tags.append("urgent")
+        if triage_response.get("category") == "COURT":
+            tags.append("court")
+        task_payload = {
+            "title": action_item if len(action_item) > 6 else f"Task {idx}: {payload.get('subject', 'Email follow-up')}",
+            "description": triage_response.get("key_points") or body,
+            "due_date": triage_response.get("deadline"),
+            "source": "email_triage_agent",
+            "tags": tags,
+        }
+        task_result = process_task(
+            GenericAgentRequest(payload=task_payload, correlation_id=payload.get("email_id") or payload.get("gmail_message_id"))
+        )
+        tasks.append(task_result)
+
+    calendar_result = None
+    if _looks_like_scheduling(body):
+        calendar_payload = {
+            "request_text": body,
+            "title": payload.get("subject") or "Client Meeting",
+            "source": "email_triage_agent",
+        }
+        calendar_result = process_calendar(
+            GenericAgentRequest(payload=calendar_payload, correlation_id=payload.get("email_id") or payload.get("gmail_message_id"))
+        )
+
+    deadline_result = _create_deadline_if_needed(payload, triage_response)
+    return {
+        "status": "ok",
+        "summary": "Workflow processed through triage, tasking, deadline checks, and scheduling.",
+        "triage": triage_response,
+        "tasks": tasks,
+        "calendar": calendar_result,
+        "deadline": deadline_result,
+        "routing": {
+            "task_count": len(tasks),
+            "calendar_triggered": calendar_result is not None,
+            "deadline_triggered": deadline_result is not None,
+            "requires_response": triage_response.get("requires_response", False),
+        },
+    }
+
+
+def _recent_processed(limit: int = 12) -> List[Dict[str, Any]]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT sender, subject, category, urgency_score, requires_response, draft_created, processed_at
+                FROM email_log
+                ORDER BY processed_at DESC NULLS LAST
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _recent_errors(limit: int = 8) -> List[Dict[str, Any]]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT agent_slug, error_message, correlation_id, created_at
+                FROM error_log
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _recent_tasks(limit: int = 8) -> List[Dict[str, Any]]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT title, priority_score, status, due_date, created_at
+                FROM tasks
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+@app.get("/", response_class=HTMLResponse)
+def frontend(request: Request):
+    return TEMPLATES.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "page_title": "LexFlow Email Triage Admin",
+            "app_env": settings.app_env,
+            "use_claude": settings.email_triage_use_claude,
+            "gmail_configured": google_adapter.is_gmail_configured(),
+            "gmail_query": settings.gmail_default_query,
+            "urgent_threshold": settings.email_triage_urgent_threshold,
+        },
+    )
+
+
+@app.get("/api/admin/overview")
+def admin_overview():
+    return {
+        "status": "ok",
+        "metrics": _dashboard_metrics(),
+        "watcher": watcher.snapshot(),
+        "gmail": {
+            "configured": google_adapter.is_gmail_configured(),
+            "mailbox_user": settings.gmail_mailbox_user,
+            "default_query": settings.gmail_default_query,
+        },
+        "recent_processed": _recent_processed(),
+        "recent_errors": _recent_errors(),
+        "recent_tasks": _recent_tasks(),
+    }
+
+
+@app.post("/api/admin/automation/start")
+def start_automation(payload: Dict[str, Any]):
+    return {"status": "ok", "watcher": watcher.start(payload.get("poll_seconds"), payload.get("query"))}
+
+
+@app.post("/api/admin/automation/stop")
+def stop_automation():
+    return {"status": "ok", "watcher": watcher.stop()}
+
+
+@app.post("/api/admin/automation/run-once")
+def run_automation_once(payload: Dict[str, Any] | None = None):
+    if payload:
+        watcher.configure(payload.get("poll_seconds"), payload.get("query"))
+    try:
+        return {"status": "ok", **watcher.run_once()}
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Could not process latest Gmail message: {exc}")
+
+
+@app.post("/api/admin/manual/triage")
+def manual_triage(payload: Dict[str, Any]):
+    return _triage_result(payload)
+
+
+@app.post("/api/admin/manual/workflow")
+def manual_workflow(payload: Dict[str, Any]):
+    return _workflow_result(payload)
+
+
+@app.get("/api/history")
+def history(limit: int = 20):
+    safe_limit = min(max(limit, 1), 100)
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT email_id, sender, subject, category, urgency_score,
+                           requires_response, draft_created, action_items, processed_at
+                    FROM email_log
+                    ORDER BY processed_at DESC NULLS LAST
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": safe_limit},
+            ).mappings().all()
+        return {"status": "ok", "items": [dict(row) for row in rows]}
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Could not fetch history: {exc}")
+
+
+@app.get("/api/tasks")
+def task_history(limit: int = 10):
+    safe_limit = min(max(limit, 1), 50)
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT task_id, title, due_date, priority_score, status, tags, created_at
+                    FROM tasks
+                    ORDER BY created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": safe_limit},
+            ).mappings().all()
+        return {"status": "ok", "items": [dict(row) for row in rows]}
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Could not fetch tasks: {exc}")
+
+
+@app.get("/api/meetings")
+def meeting_history(limit: int = 10):
+    safe_limit = min(max(limit, 1), 50)
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT meeting_id, title, scheduled_time, duration, calendar_event_id, status, created_at
+                    FROM meetings
+                    ORDER BY created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": safe_limit},
+            ).mappings().all()
+        return {"status": "ok", "items": [dict(row) for row in rows]}
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Could not fetch meetings: {exc}")
+
+
+@app.get("/api/metrics")
+def metrics():
+    try:
+        return {"status": "ok", "metrics": _dashboard_metrics()}
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Could not fetch metrics: {exc}")
