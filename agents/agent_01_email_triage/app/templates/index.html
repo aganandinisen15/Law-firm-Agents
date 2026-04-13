@@ -3,178 +3,257 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ page_title }}</title>
+  <title>LexFlow Email Triage Admin</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <div class="shell">
+  <div class="layout">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">LF</div>
+        <div class="brand-badge">LF</div>
         <div>
-          <div class="eyebrow">Admin panel</div>
+          <div class="eyebrow">Admin Panel</div>
           <h1>Email Triage</h1>
         </div>
       </div>
-      <div class="sidebar-group">
-        <span class="pill">{{ app_env }}</span>
-        <span class="pill {{ 'pill-success' if use_claude else '' }}">{{ 'Claude live' if use_claude else 'Fallback mode' }}</span>
-        <span class="pill {{ 'pill-success' if gmail_configured else 'pill-warn' }}">{{ 'Gmail API ready' if gmail_configured else 'Gmail not configured' }}</span>
+
+      <div class="status-stack">
+        <span class="pill">development</span>
+        <span class="pill">Fallback mode</span>
+        <span class="pill">Gmail API ready</span>
       </div>
-      <div class="sidebar-card">
-        <p class="eyebrow">Purpose</p>
-        <p>Monitor Gmail, triage inbox emails server-side, route actions to tasks and calendar, and keep attorney review in control.</p>
-      </div>
-      <div class="sidebar-card small">
-        <p class="eyebrow">Automation rules</p>
-        <ul>
+
+      <section class="side-card">
+        <div class="eyebrow">Purpose</div>
+        <p>
+          Monitor Gmail, triage inbox emails server-side, route actions to tasks
+          and calendar, and keep attorney review in control.
+        </p>
+      </section>
+
+      <section class="side-card">
+        <div class="eyebrow">Automation rules</div>
+        <ul class="side-list">
           <li>Only inbox items matching your Gmail query are checked.</li>
           <li>Urgent emails trigger star + SMS alert when Twilio is configured.</li>
           <li>Court emails create deadline records.</li>
-          <li>Drafts are created in Gmail for attorney review.</li>
+          <li>Drafts are created in Gmail for review.</li>
         </ul>
-      </div>
+      </section>
     </aside>
 
-    <main class="content">
-      <section id="alertBar" class="alert hidden"></section>
+    <main class="main">
+      <div id="alertBar" class="alert hidden"></div>
 
-      <section class="hero">
+      <section class="hero card">
         <div>
-          <p class="eyebrow">Operations console</p>
+          <div class="eyebrow">Operations Console</div>
           <h2>Gmail-triggered email triage without loading raw inbox emails into the UI</h2>
-          <p class="hero-copy">This admin panel controls the automation and shows processing results, errors, and workflow outputs. The Gmail inbox stays in Gmail.</p>
+          <p>
+            This admin panel controls the automation and shows processing results,
+            errors, and workflow outputs. The Gmail inbox stays in Gmail.
+          </p>
         </div>
         <div class="hero-actions">
-          <button id="runOnceBtn" class="btn btn-primary">Check latest inbox email now</button>
-          <button id="refreshOverviewBtn" class="btn btn-secondary">Refresh panel</button>
+          <button id="runOnceBtn" class="btn btn-primary" type="button">Check latest inbox email now</button>
+          <button id="refreshOverviewBtn" class="btn btn-secondary" type="button">Refresh panel</button>
         </div>
       </section>
 
-      <section class="metrics-grid">
-        <article class="metric-card"><span>Processed</span><strong id="metricProcessed">0</strong></article>
-        <article class="metric-card"><span>Urgent</span><strong id="metricUrgent">0</strong></article>
-        <article class="metric-card"><span>Drafts</span><strong id="metricDrafts">0</strong></article>
-        <article class="metric-card"><span>Court</span><strong id="metricCourt">0</strong></article>
-        <article class="metric-card"><span>Tasks</span><strong id="metricTasks">0</strong></article>
-        <article class="metric-card"><span>Meetings</span><strong id="metricMeetings">0</strong></article>
+      <section class="metrics">
+        <article class="metric card">
+          <div class="metric-label">Processed</div>
+          <div id="metricProcessed" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">Urgent</div>
+          <div id="metricUrgent" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">Drafts</div>
+          <div id="metricDrafts" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">Court</div>
+          <div id="metricCourt" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">Tasks</div>
+          <div id="metricTasks" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">Meetings</div>
+          <div id="metricMeetings" class="metric-value">0</div>
+        </article>
       </section>
 
-      <section class="grid two-col">
-        <article class="panel">
-          <div class="panel-head">
+      <section class="grid-2">
+        <section class="card">
+          <div class="section-head">
             <div>
-              <p class="eyebrow">Automation control</p>
+              <div class="eyebrow">Automation Control</div>
               <h3>Gmail watcher</h3>
             </div>
-            <span id="watcherState" class="status-chip">Stopped</span>
+            <span id="watcherState" class="status-chip stopped">Stopped</span>
           </div>
-          <div class="field-grid">
-            <label>
+
+          <div class="form-grid">
+            <label class="field">
               <span>Inbox query</span>
-              <input id="gmailQuery" type="text" value="{{ gmail_query }}" />
+              <input id="gmailQuery" type="text" value="in:inbox -category:promotions -category:social" />
             </label>
-            <label>
+
+            <label class="field">
               <span>Poll interval</span>
               <select id="pollSeconds">
                 <option value="10">10 seconds</option>
                 <option value="15">15 seconds</option>
                 <option value="30" selected>30 seconds</option>
                 <option value="60">60 seconds</option>
-                <option value="120">120 seconds</option>
               </select>
             </label>
           </div>
-          <div class="button-row">
-            <button id="startWatcherBtn" class="btn btn-primary">Start automation</button>
-            <button id="stopWatcherBtn" class="btn btn-secondary">Stop automation</button>
-          </div>
-          <dl class="data-list">
-            <div><dt>Mailbox user</dt><dd id="gmailMailbox">me</dd></div>
-            <div><dt>Last checked</dt><dd id="lastChecked">—</dd></div>
-            <div><dt>Last processed</dt><dd id="lastProcessed">—</dd></div>
-            <div><dt>Session processed</dt><dd id="sessionProcessed">0</dd></div>
-          </dl>
-        </article>
 
-        <article class="panel">
-          <div class="panel-head">
+          <div class="button-row">
+            <button id="startWatcherBtn" class="btn btn-primary" type="button">Start automation</button>
+            <button id="stopWatcherBtn" class="btn btn-secondary" type="button">Stop automation</button>
+          </div>
+
+          <div class="kv-list">
+            <div class="kv-row"><span>Mailbox user</span><strong id="gmailMailbox">me</strong></div>
+            <div class="kv-row"><span>Last checked</span><strong id="lastChecked">—</strong></div>
+            <div class="kv-row"><span>Last processed</span><strong id="lastProcessed">—</strong></div>
+            <div class="kv-row"><span>Session processed</span><strong id="sessionProcessed">0</strong></div>
+            <div class="kv-row"><span>Gmail configured</span><strong id="gmailConfigured">—</strong></div>
+            <div class="kv-row"><span>Default query</span><strong id="defaultQuery">—</strong></div>
+            <div class="kv-row"><span>Last error</span><strong id="lastError">None</strong></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
             <div>
-              <p class="eyebrow">Result summary</p>
+              <div class="eyebrow">Result Summary</div>
               <h3>Latest run</h3>
             </div>
           </div>
+
           <div class="summary-grid">
-            <div class="summary-card"><span>Category</span><strong id="latestCategory">—</strong></div>
-            <div class="summary-card"><span>Urgency</span><strong id="latestUrgency">—</strong></div>
-            <div class="summary-card"><span>Response required</span><strong id="latestResponse">—</strong></div>
-            <div class="summary-card"><span>Routes</span><strong id="latestRoutes">—</strong></div>
+            <article class="summary-box">
+              <span>Category</span>
+              <strong id="latestCategory">—</strong>
+            </article>
+            <article class="summary-box">
+              <span>Urgency</span>
+              <strong id="latestUrgency">—</strong>
+            </article>
+            <article class="summary-box">
+              <span>Response required</span>
+              <strong id="latestResponse">—</strong>
+            </article>
+            <article class="summary-box">
+              <span>Routes</span>
+              <strong id="latestRoutes">—</strong>
+            </article>
           </div>
-          <div class="result-block">
-            <div class="result-line"><span>Summary</span><p id="latestSummary">No workflow has been run yet.</p></div>
-            <div class="result-line"><span>Draft preview</span><p id="latestDraft">—</p></div>
-            <div class="result-line"><span>Action items</span><div id="latestActions" class="tag-row"></div></div>
+
+          <div class="content-block">
+            <div class="eyebrow">Summary</div>
+            <p id="latestSummary">No workflow has been run yet.</p>
           </div>
-        </article>
+
+          <div class="content-block">
+            <div class="eyebrow">Draft response</div>
+            <pre id="latestDraft" class="pre-box">No draft generated.</pre>
+          </div>
+
+          <div class="content-block">
+            <div class="eyebrow">Action items</div>
+            <div id="latestActions" class="tag-row">
+              <span class="tag">No action items</span>
+            </div>
+          </div>
+        </section>
       </section>
 
-      <section class="grid two-col">
-        <article class="panel">
-          <div class="panel-head">
+      <section class="grid-2">
+        <section class="card">
+          <div class="section-head">
             <div>
-              <p class="eyebrow">Manual test</p>
-              <h3>Simulate a single email</h3>
-            </div>
-            <div class="button-row tight">
-              <button class="btn btn-secondary sample-btn" data-sample="urgent">Urgent</button>
-              <button class="btn btn-secondary sample-btn" data-sample="court">Court</button>
-              <button class="btn btn-secondary sample-btn" data-sample="schedule">Schedule</button>
+              <div class="eyebrow">Manual Testing</div>
+              <h3>Simulation form</h3>
             </div>
           </div>
-          <form id="manualForm" class="field-stack">
-            <label><span>From</span><input id="manualFrom" type="email" required /></label>
-            <label><span>Subject</span><input id="manualSubject" type="text" required /></label>
-            <label><span>Body</span><textarea id="manualBody" rows="10" required></textarea></label>
-            <label class="checkbox"><input id="manualAttachments" type="checkbox" /><span>Has attachments</span></label>
+
+          <div class="button-row">
+            <button class="btn btn-secondary sample-btn" type="button" data-sample="urgent">Urgent sample</button>
+            <button class="btn btn-secondary sample-btn" type="button" data-sample="court">Court sample</button>
+            <button class="btn btn-secondary sample-btn" type="button" data-sample="schedule">Schedule sample</button>
+          </div>
+
+          <div class="button-row">
+            <button id="manualTriageBtn" class="btn btn-secondary" type="button">Triage only</button>
+          </div>
+
+          <form id="manualForm" class="form-stack">
+            <label class="field">
+              <span>From</span>
+              <input id="manualFrom" type="email" placeholder="sender@example.com" required />
+            </label>
+
+            <label class="field">
+              <span>Subject</span>
+              <input id="manualSubject" type="text" placeholder="Email subject" required />
+            </label>
+
+            <label class="field">
+              <span>Body</span>
+              <textarea id="manualBody" rows="8" placeholder="Paste email body here" required></textarea>
+            </label>
+
+            <label class="checkbox-row">
+              <input id="manualAttachments" type="checkbox" />
+              <span>Has attachments</span>
+            </label>
+
             <div class="button-row">
-              <button id="manualTriageBtn" type="button" class="btn btn-secondary">Triage only</button>
-              <button id="manualWorkflowBtn" type="submit" class="btn btn-primary">Run full workflow</button>
+              <button id="manualWorkflowBtn" class="btn btn-primary" type="submit">Run full workflow</button>
             </div>
           </form>
-        </article>
+        </section>
 
-        <article class="panel">
-          <div class="panel-head">
+        <section class="card">
+          <div class="section-head">
             <div>
-              <p class="eyebrow">Exceptions</p>
-              <h3>Recent issues</h3>
+              <div class="eyebrow">Operational Feeds</div>
+              <h3>Recent activity</h3>
             </div>
           </div>
-          <div id="errorList" class="list"></div>
-        </article>
-      </section>
 
-      <section class="grid three-col">
-        <article class="panel">
-          <div class="panel-head"><div><p class="eyebrow">Processed</p><h3>Recent email decisions</h3></div></div>
-          <div id="processedList" class="list"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-head"><div><p class="eyebrow">Routing</p><h3>Task queue</h3></div></div>
-          <div id="taskList" class="list"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-head"><div><p class="eyebrow">Integration</p><h3>System health</h3></div></div>
-          <dl class="data-list compact">
-            <div><dt>Gmail configured</dt><dd id="gmailConfigured">—</dd></div>
-            <div><dt>Default query</dt><dd id="defaultQuery">—</dd></div>
-            <div><dt>Urgent threshold</dt><dd>{{ urgent_threshold }}</dd></div>
-            <div><dt>Last error</dt><dd id="lastError">—</dd></div>
-          </dl>
-        </article>
+          <div class="feed-block">
+            <div class="feed-title">Processed emails</div>
+            <div id="processedList" class="feed-list"></div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Tasks</div>
+            <div id="taskList" class="feed-list"></div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Meetings</div>
+            <div id="meetingList" class="feed-list"></div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Errors</div>
+            <div id="errorList" class="feed-list"></div>
+          </div>
+        </section>
       </section>
     </main>
   </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>
