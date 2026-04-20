@@ -66,21 +66,35 @@ function setBusy(disabled) {
     .filter(Boolean)
     .forEach((el) => { el.disabled = disabled; });
 }
-async function api(url, options={}) {
+async function api(url, options = {}) {
+  const fullUrl = `${window.location.origin}${url}`;
+
   let response;
   try {
-    response = await fetch(`${API_BASE}${url}`, {
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    response = await fetch(fullUrl, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
       ...options,
     });
   } catch (err) {
-    console.error('Network error', err);
-    throw new Error(`Cannot connect to backend at ${API_BASE}`);
+    throw new Error(`Cannot connect to backend at ${fullUrl}`);
   }
-  const payload = await response.json().catch(() => ({}));
+
+  const rawText = await response.text();
+  let payload = {};
+
+  try {
+    payload = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    payload = { detail: rawText || 'Unknown server response' };
+  }
+
   if (!response.ok) {
-    throw new Error(payload.detail || payload.message || 'Request failed.');
+    throw new Error(payload.detail || payload.message || `Request failed: ${response.status}`);
   }
+
   return payload;
 }
 function renderList(items, target, renderer, empty='No records yet.') {

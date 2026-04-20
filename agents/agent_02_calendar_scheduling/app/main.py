@@ -1,27 +1,31 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
+import calendar
 import json
 import os
 import re
 import sqlite3
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from app.services.google_clients import GoogleWorkspaceClients
+from .services.google_clients import GoogleWorkspaceClients
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("SCHEDULING_DB_PATH", BASE_DIR.parent / "calendar_agent.db"))
+DEFAULT_TIMEZONE = os.getenv("CALENDAR_DEFAULT_TIMEZONE", "Asia/Kolkata")
 
-app = FastAPI(title="Calendar & Scheduling Agent", version="2.0.0")
+app = FastAPI(title="Calendar & Scheduling Agent", version="2.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,6 +52,7 @@ class MeetingDetails(BaseModel):
     duration_minutes: int
     location: str
     notes: str = ""
+    flexible: bool = False
 
 
 # ---------- DB ----------
@@ -111,6 +116,175 @@ def now_iso() -> str:
 
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+WEEKDAYS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+}
+
+
+def next_weekday(base: datetime, weekday: int) -> datetime:
+    ahead = (weekday - base.weekday()) % 7
+    if ahead == 0:
+        ahead = 7
+    return base + timedelta(days=ahead)
+
+
+def infer_hour_minute(text: str) -> tuple[int, int]:
+    lower = text.lower()
+    explicit = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)", lower)
+    if explicit:
+        hh = int(explicit.group(1)) % 12
+        mm = int(explicit.group(2) or 0)
+        mer = explicit.group(3)
+        hour = hh + (12 if mer == "pm" else 0)
+        return hour, mm
+    if "afternoon" in lower:
+        return 14, 0
+    if "morning" in lower:
+        return 10, 0
+    return 10, 0
+
+
+def resolve_preferred_datetime(text: str, now: datetime | None = None) -> datetime:
+    now = now or datetime.now().replace(second=0, microsecond=0)
+    text = text.strip().lower()
+
+    try:
+        return datetime.fromisoformat(text)
+    except Exception:
+        pass
+
+    hour, minute = infer_hour_minute(text)
+
+    # full month + day e.g. april 18
+    month_match = re.search(r"(" + "|".join(MONTHS.keys()) + r")", text)
+    day_match = re.search(r"(\d{1,2})(st|nd|rd|th)?", text)
+    if month_match and day_match:
+        month = MONTHS[month_match.group(1)]
+        day = int(day_match.group(1))
+        year = now.year
+        candidate = datetime(year, month, min(day, calendar.monthrange(year, month)[1]), hour, minute)
+        if candidate < now:
+            candidate = datetime(year + 1, month, min(day, calendar.monthrange(year + 1, month)[1]), hour, minute)
+        return candidate
+
+    # weekday references
+    for label, idx in WEEKDAYS.items():
+        if label in text:
+            candidate = next_weekday(now, idx).replace(hour=hour, minute=minute)
+            return candidate
+
+    # ordinal day like 18th
+    if day_match:
+        day = int(day_match.group(1))
+        year = now.year
+        month = now.month
+        last_day = calendar.monthrange(year, month)[1]
+        candidate = datetime(year, month, min(day, last_day), hour, minute)
+        if candidate < now:
+            if month == 12:
+                year += 1
+                month = 1
+            else:
+                month += 1
+            last_day = calendar.monthrange(year, month)[1]
+            candidate = datetime(year, month, min(day, last_day), hour, minute)
+        return candidate
+
+    # fallback: next business day at preferred/default time
+    candidate = (now + timedelta(days=1)).replace(hour=hour, minute=minute)
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate
+
+def ensure_preferred_time_first(request_text: str, proposed_times: list[str]) -> list[str]:
+    try:
+        preferred = parse_preferred_datetime(request_text).isoformat()
+        cleaned = [t for t in proposed_times if t != preferred]
+        return [preferred] + cleaned
+    except Exception:
+        return proposed_times
+
+def parse_preferred_datetime(request_text: str, now: datetime | None = None) -> datetime:
+    now = now or datetime.now(IST)
+    text = request_text.lower().strip()
+
+    # Match patterns like "25th april 2026 at 3pm"
+    match = re.search(
+        r'(\d{1,2})(st|nd|rd|th)?\s+'
+        r'(january|february|march|april|may|june|july|august|september|october|november|december)'
+        r'\s+(\d{4})'
+        r'(?:\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?',
+        text,
+    )
+
+    if match:
+        day = int(match.group(1))
+        month_name = match.group(3)
+        year = int(match.group(4))
+        hour = int(match.group(5)) if match.group(5) else 10
+        minute = int(match.group(6)) if match.group(6) else 0
+        ampm = match.group(7)
+
+        month = list(calendar.month_name).index(month_name.capitalize())
+
+        if ampm:
+            if ampm.lower() == "pm" and hour != 12:
+                hour += 12
+            elif ampm.lower() == "am" and hour == 12:
+                hour = 0
+
+        return datetime(year, month, day, hour, minute, 0, tzinfo=IST)
+
+    # Match patterns like "25th at 3pm" or "25 april"
+    match = re.search(
+        r'(\d{1,2})(st|nd|rd|th)?'
+        r'(?:\s+'
+        r'(january|february|march|april|may|june|july|august|september|october|november|december))?'
+        r'(?:\s+(\d{4}))?'
+        r'(?:\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?',
+        text,
+    )
+
+    if match:
+        day = int(match.group(1))
+        month_name = match.group(3)
+        year = int(match.group(4)) if match.group(4) else now.year
+        hour = int(match.group(5)) if match.group(5) else 10
+        minute = int(match.group(6)) if match.group(6) else 0
+        ampm = match.group(7)
+
+        month = list(calendar.month_name).index(month_name.capitalize()) if month_name else now.month
+
+        if ampm:
+            if ampm.lower() == "pm" and hour != 12:
+                hour += 12
+            elif ampm.lower() == "am" and hour == 12:
+                hour = 0
+
+        candidate = datetime(year, month, day, hour, minute, 0, tzinfo=IST)
+
+        if candidate < now:
+            # If inferred date is in the past, move to next month only when month/year not explicitly given
+            if not month_name and not match.group(4):
+                if month == 12:
+                    candidate = candidate.replace(year=year + 1, month=1)
+                else:
+                    last_day = calendar.monthrange(year, month + 1)[1]
+                    candidate = candidate.replace(month=month + 1, day=min(day, last_day))
+
+        return candidate
+
+    raise ValueError(f"Could not parse preferred datetime from request: {request_text}")
 
 
 def parse_request_text(text: str) -> MeetingDetails:
@@ -138,45 +312,37 @@ def parse_request_text(text: str) -> MeetingDetails:
         duration = int(duration_match.group(1))
 
     location = "video call" if any(x in lower for x in ["zoom", "meet", "video", "call"]) else "in-person"
+    flexible = any(x in lower for x in ["or", "either", "available", "next week", "works best"])
 
     proposed_times: list[str] = []
-    base = datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(days=1)
-    weekdays = {
-        "monday": 0,
-        "tuesday": 1,
-        "wednesday": 2,
-        "thursday": 3,
-        "friday": 4,
-    }
-    for day, idx in weekdays.items():
-        if day in lower:
-            ahead = (idx - base.weekday()) % 7
-            target = base + timedelta(days=ahead)
-            hour = 10
-            if "afternoon" in lower:
-                hour = 14
-            elif "morning" in lower:
-                hour = 10
-            proposed_times.append(target.replace(hour=hour).isoformat())
+    now = datetime.now().replace(second=0, microsecond=0)
 
-    explicit_times = re.findall(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)", lower)
-    if explicit_times and proposed_times:
-        enriched = []
-        for i, t in enumerate(proposed_times[: len(explicit_times)]):
-            dt = datetime.fromisoformat(t)
-            hh, mm, mer = explicit_times[i]
-            hour = int(hh) % 12 + (12 if mer == "pm" else 0)
-            minute = int(mm or 0)
-            enriched.append(dt.replace(hour=hour, minute=minute).isoformat())
-        proposed_times = enriched or proposed_times
+    # Extract explicit options like Tuesday or Wednesday, next Tuesday, April 18, 18th
+    if any(day in lower for day in WEEKDAYS):
+        for label in WEEKDAYS:
+            if label in lower:
+                proposed_times.append(resolve_preferred_datetime(label + " " + lower, now).isoformat())
+    else:
+        # month/day or ordinal day or fallback
+        proposed_times.append(resolve_preferred_datetime(lower, now).isoformat())
 
-    if not proposed_times:
-        proposed_times = [
-            base.replace(hour=10).isoformat(),
-            base.replace(hour=14).isoformat(),
-        ]
+    # add a second option only if request seems flexible or only one option provided
+    if len(proposed_times) == 1 and flexible:
+        alt = datetime.fromisoformat(proposed_times[0]) + timedelta(hours=4)
+        if 12 <= alt.hour < 14:
+            alt = alt.replace(hour=14, minute=0)
+        proposed_times.append(alt.isoformat())
 
-    notes = "Attorney prefers mornings for client meetings; avoid 12:00-13:30 lunch block."
+    # de-duplicate preserve order
+    seen = set()
+    deduped = []
+    for p in proposed_times:
+        if p not in seen:
+            deduped.append(p)
+            seen.add(p)
+    proposed_times = deduped[:3]
+
+    notes = "Attorney prefers mornings for client meetings; avoid 12:00-13:30 lunch block; preserve requester preferred date first."
     return MeetingDetails(
         title=title,
         attendees=attendees,
@@ -184,6 +350,7 @@ def parse_request_text(text: str) -> MeetingDetails:
         duration_minutes=duration,
         location=location,
         notes=notes,
+        flexible=flexible,
     )
 
 
@@ -203,6 +370,27 @@ def check_availability(clients: GoogleWorkspaceClients, proposed_times: list[str
         )
     return results
 
+import re
+
+def contains_scheduling_request(subject: str, body: str) -> bool:
+    text = f"{subject}\n{body}".lower()
+
+    patterns = [
+        r"\bschedule\b",
+        r"\bmeeting\b",
+        r"\bcall\b",
+        r"\bavailability\b",
+        r"\bavailable\b",
+        r"\bbook\b",
+        r"\bnext tuesday\b",
+        r"\bnext wednesday\b",
+        r"\bnext week\b",
+        r"\bat \d{1,2}(:\d{2})?\s?(am|pm)\b",
+        r"\bon \d{1,2}(st|nd|rd|th)?\b",
+        r"^schedule:",
+    ]
+
+    return any(re.search(pattern, text) for pattern in patterns)
 
 def generate_alternatives(base_time: datetime, unavailable: list[dict[str, Any]]) -> list[dict[str, str]]:
     slots = []
@@ -285,7 +473,7 @@ def overview() -> dict[str, Any]:
     runs = [dict(r) for r in conn.execute("SELECT * FROM run_log ORDER BY id DESC LIMIT 8").fetchall()]
     metrics = {
         "meetings_total": conn.execute("SELECT COUNT(*) FROM meetings").fetchone()[0],
-        "scheduled_total": conn.execute("SELECT COUNT(*) FROM meetings WHERE status='scheduled'").fetchone()[0],
+        "scheduled_total": conn.execute("SELECT COUNT(*) FROM meetings WHERE status LIKE 'scheduled%'").fetchone()[0],
         "conflict_total": conn.execute("SELECT COUNT(*) FROM meetings WHERE status='conflict'").fetchone()[0],
         "draft_total": conn.execute("SELECT COUNT(*) FROM meetings WHERE status='drafted_alternatives'").fetchone()[0],
     }
@@ -303,22 +491,35 @@ def overview() -> dict[str, Any]:
 def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
     details = parse_request_text(payload.request_text)
     clients = GoogleWorkspaceClients.from_env()
+
+    # Use the actual request text from payload, not an undefined request object
+    details.proposed_times = ensure_preferred_time_first(
+        request_text=payload.request_text,
+        proposed_times=details.proposed_times,
+    )
+
     availability = check_availability(clients, details.proposed_times, details.duration_minutes)
     available_slots = [a for a in availability if a["available"]]
     conflicts = [a for a in availability if not a["available"]]
 
     result: dict[str, Any] = {
         "details": details.model_dump(),
+        "preferred_time": details.proposed_times[0] if details.proposed_times else None,
         "availability": availability,
         "status": "parsed",
         "calendar_event_id": None,
+        "calendar_event_link": None,
         "gmail_action": None,
         "alternatives": [],
+        "google_mode": clients.status(),
+        "scheduled_time": None,
     }
 
     if available_slots and payload.auto_create_event:
+        # First available slot should now be the user's preferred slot if free
         chosen = available_slots[0]
-        event_id = clients.create_calendar_event(
+
+        event_info = clients.create_calendar_event(
             title=details.title,
             start_iso=chosen["start"],
             end_iso=chosen["end"],
@@ -327,27 +528,44 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
             notes=details.notes,
             add_video=(details.location == "video call"),
         )
-        result["status"] = "scheduled"
-        result["calendar_event_id"] = event_id
+
+        # Match the keys returned by create_calendar_event()
+        result["status"] = "scheduled_google" if clients.enabled else "scheduled_local"
+        result["calendar_event_id"] = event_info.get("event_id")
+        result["calendar_event_link"] = event_info.get("event_link")
         result["scheduled_time"] = chosen["start"]
-        save_meeting(details, chosen["start"], "scheduled", payload.source, payload.matter_id, event_id)
+
+        save_meeting(
+            details,
+            chosen["start"],
+            result["status"],
+            payload.source,
+            payload.matter_id,
+            event_info.get("event_id"),
+        )
+
     elif conflicts:
         base = datetime.fromisoformat(details.proposed_times[0])
         alternatives = generate_alternatives(base, conflicts)
+
         result["status"] = "conflict"
         result["alternatives"] = alternatives
+
         draft_body = clients.create_gmail_draft(
             to=payload.requester_email or (details.attendees[0]["email"] if details.attendees else ""),
             subject=f"Re: {details.title}",
             body=(
-                "Thank you for the scheduling request. The proposed times conflict with the attorney's calendar. "
-                "Here are three alternative options:\n\n" +
-                "\n".join([f"- {a['time']} ({a['reason']})" for a in alternatives]) +
-                "\n\nPlease confirm which option works best.\n\nLegal Team"
+                "Thank you for the scheduling request. "
+                "The preferred time conflicts with the attorney's calendar.\n\n"
+                "Here are three alternative options:\n"
+                + "\n".join([f"- {a['time']} ({a['reason']})" for a in alternatives])
+                + "\n\nPlease confirm which option works best.\n\nLegal Team"
             ),
         )
+
         result["gmail_action"] = draft_body
         save_meeting(details, None, "drafted_alternatives", payload.source, payload.matter_id, None)
+
     else:
         save_meeting(details, None, "manual_review", payload.source, payload.matter_id, None)
         result["status"] = "manual_review"
