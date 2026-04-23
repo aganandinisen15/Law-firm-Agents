@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
-from agents.agent_02_calendar_scheduling.app.processor import process as process_calendar
 from agents.agent_03_task_priority.app.processor import process as process_task
 from shared.legal_agents.adapters import GoogleWorkspaceAdapter
 from shared.legal_agents.base_agent import build_router
@@ -22,6 +21,11 @@ from shared.legal_agents.logging_utils import configure_logging
 from shared.legal_agents.schemas import GenericAgentRequest
 from shared.legal_agents.settings import settings
 from .processor import process
+
+import re
+import requests
+
+CALENDAR_AGENT_URL = "http://calendar-scheduling:8012/run"
 
 configure_logging(settings.log_level)
 
@@ -266,53 +270,140 @@ def _create_deadline_if_needed(payload: Dict[str, Any], triage_response: Dict[st
         return None
 
 
+def contains_scheduling_request(subject: str, body: str) -> bool:
+    text = f"{subject}\n{body}".lower().strip()
+
+    patterns = [
+        r"^schedule:",
+        r"\bschedule\b",
+        r"\bmeeting\b",
+        r"\bcall\b",
+        r"\bavailability\b",
+        r"\bavailable\b",
+        r"\bbook\b",
+        r"\bset up a meeting\b",
+        r"\bcan we meet\b",
+        r"\bnext monday\b",
+        r"\bnext tuesday\b",
+        r"\bnext wednesday\b",
+        r"\bnext thursday\b",
+        r"\bnext friday\b",
+        r"\bnext week\b",
+        r"\bon \d{1,2}(st|nd|rd|th)?\b",
+        r"\bat \d{1,2}(:\d{2})?\s?(am|pm)\b",
+    ]
+
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def should_trigger_calendar(category: str, subject: str, body: str) -> bool:
+    if subject.strip().upper().startswith("SCHEDULE:"):
+        return True
+
+    allowed_categories = {
+        "URGENT_CLIENT",
+        "CLIENT_ROUTINE",
+        "ADMIN",
+        "BUSINESS_DEV",
+    }
+
+    if category not in allowed_categories:
+        return False
+
+    return contains_scheduling_request(subject, body)
+
+
+def call_calendar_agent(payload: dict[str, Any]) -> dict[str, Any]:
+    response = requests.post(
+        CALENDAR_AGENT_URL,
+        json=payload,
+        timeout=45,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _workflow_result(payload: Dict[str, Any]) -> Dict[str, Any]:
     triage_response = _triage_result(payload)["data"]
-    body = f"{payload.get('subject', '')}\n\n{payload.get('body', '')}"
 
+    subject = payload.get("subject", "") or ""
+    body = payload.get("body", "") or ""
+    sender = payload.get("from") or payload.get("sender") or ""
+
+    # ---------------- TASK CREATION ----------------
     tasks: List[Dict[str, Any]] = []
+
     for idx, action_item in enumerate(triage_response.get("action_items", [])[:3], start=1):
-        tags = ["email", triage_response.get("category", "CLIENT_ROUTINE").lower()]
+        tags = ["email", triage_response.get("category", "client_routine").lower()]
+
         if triage_response.get("deadline"):
             tags.append("deadline")
+
         if triage_response.get("urgency_score", 0) >= settings.email_triage_urgent_threshold:
             tags.append("urgent")
+
         if triage_response.get("category") == "COURT":
             tags.append("court")
+
         task_payload = {
-            "title": action_item if len(action_item) > 6 else f"Task {idx}: {payload.get('subject', 'Email follow-up')}",
-            "description": triage_response.get("key_points") or body,
+            "title": action_item if len(action_item) > 6 else f"Task {idx}: {subject or 'Email follow-up'}",
+            "description": triage_response.get("key_points") or f"{subject}\n\n{body}",
             "due_date": triage_response.get("deadline"),
             "source": "email_triage_agent",
             "tags": tags,
         }
+
         task_result = process_task(
-            GenericAgentRequest(payload=task_payload, correlation_id=payload.get("email_id") or payload.get("gmail_message_id"))
+            GenericAgentRequest(
+                payload=task_payload,
+                correlation_id=payload.get("email_id") or payload.get("gmail_message_id"),
+            )
         )
+
         tasks.append(task_result)
 
+    # ---------------- CALENDAR TRIGGER ----------------
     calendar_result = None
-    if _looks_like_scheduling(body):
-        calendar_payload = {
-            "request_text": body,
-            "title": payload.get("subject") or "Client Meeting",
-            "source": "email_triage_agent",
-        }
-        calendar_result = process_calendar(
-            GenericAgentRequest(payload=calendar_payload, correlation_id=payload.get("email_id") or payload.get("gmail_message_id"))
-        )
 
+    calendar_triggered = should_trigger_calendar(
+        triage_response.get("category", ""),
+        subject,
+        body,
+    )
+
+    if calendar_triggered:
+        try:
+            calendar_payload = {
+                "request_text": f"Subject: {subject}\n\nBody:\n{body}",
+                "requester_email": sender,
+                "matter_id": None,
+                "source": "email_triage_agent",
+                "auto_create_event": True,
+            }
+
+            calendar_result = call_calendar_agent(calendar_payload)
+
+        except Exception as exc:
+            calendar_result = {
+                "status": "calendar_error",
+                "error": str(exc),
+            }
+
+    # ---------------- DEADLINE ----------------
     deadline_result = _create_deadline_if_needed(payload, triage_response)
+
+    # ---------------- FINAL RESPONSE ----------------
     return {
         "status": "ok",
-        "summary": "Workflow processed through triage, tasking, deadline checks, and scheduling.",
+        "summary": "Workflow processed with triage, tasks, deadlines, and scheduling.",
         "triage": triage_response,
         "tasks": tasks,
+        "calendar_triggered": calendar_triggered,
         "calendar": calendar_result,
         "deadline": deadline_result,
         "routing": {
             "task_count": len(tasks),
-            "calendar_triggered": calendar_result is not None,
+            "calendar_triggered": calendar_triggered,
             "deadline_triggered": deadline_result is not None,
             "requires_response": triage_response.get("requires_response", False),
         },

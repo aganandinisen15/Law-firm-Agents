@@ -1,19 +1,7 @@
 {
-  "correlation_id": "calendar_scheduling-sample-001",
-  "payload": {
-    "title": "Client Meeting",
-    "attendees": [
-      {
-        "name": "Client",
-        "email": "client@example.com"
-      }
-    ],
-    "proposed_times": [
-      "2026-01-20T10:00:00",
-      "2026-01-20T14:00:00"
-    ]
-  },
-  "metadata": {
-    "source": "manual"
-  }
+  "request_text": "Can we schedule a call next Tuesday or Wednesday afternoon to discuss the lease comments? Please include client@example.com and opposing.counsel@example.com on the invite. 60 minutes, video call.",
+  "source": "manual",
+  "auto_create_event": true,
+  "requester_email": "client@example.com",
+  "matter_id": "MAT-123"
 }

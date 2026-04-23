@@ -75,7 +75,7 @@ services:
     container_name: calendar-scheduling
     restart: unless-stopped
     env_file:
-      - .env
+      - agents/agent_02_calendar_scheduling/.env
     environment:
       AGENT_SLUG: calendar_scheduling
       AGENT_PORT: 8012

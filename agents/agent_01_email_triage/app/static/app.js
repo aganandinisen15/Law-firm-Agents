@@ -1,4 +1,5 @@
-const API_BASE = "http://localhost:8011";
+const API_BASE = window.location.origin;
+
 const SAMPLE_DATA = {
   urgent: {
     from: 'client@example.com',
@@ -14,8 +15,8 @@ const SAMPLE_DATA = {
   },
   schedule: {
     from: 'client@example.com',
-    subject: 'Schedule a meeting next week',
-    body: 'Can we schedule a call next Tuesday or Wednesday afternoon to discuss the lease comments?',
+    subject: 'SCHEDULE: Client call',
+    body: 'Please schedule a meeting on 25th April 2026 at 3 PM with client@example.com. Video call preferred.',
     attachments: false,
   },
 };
@@ -65,6 +66,11 @@ const els = {
   manualSubject: document.getElementById('manualSubject'),
   manualBody: document.getElementById('manualBody'),
   manualAttachments: document.getElementById('manualAttachments'),
+
+  calendarStatus: document.getElementById('calendarStatus'),
+  calendarTriggered: document.getElementById('calendarTriggered'),
+  calendarScheduledTime: document.getElementById('calendarScheduledTime'),
+  calendarEventLink: document.getElementById('calendarEventLink'),
 };
 
 const state = {
@@ -88,6 +94,21 @@ function formatDate(value) {
     return new Date(value).toLocaleString();
   } catch {
     return value;
+  }
+}
+
+function formatCalendarStatus(status) {
+  switch (status) {
+    case 'scheduled_google':
+      return 'Scheduled (Google Calendar)';
+    case 'scheduled_local':
+      return 'Scheduled (Local)';
+    case 'conflict':
+      return 'Conflict – alternatives generated';
+    case 'calendar_error':
+      return 'Error while scheduling';
+    default:
+      return status || '—';
   }
 }
 
@@ -130,13 +151,20 @@ async function api(url, options = {}) {
       ...options,
     });
   } catch (err) {
-    throw new Error('Cannot connect to backend. Check Docker/container status.');
+    console.error('Network error:', err);
+    throw new Error('Cannot connect to backend.');
   }
 
-  const payload = await response.json().catch(() => ({}));
+  const rawText = await response.text();
+  let payload = {};
+  try {
+    payload = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    payload = { detail: rawText || 'Unknown server response' };
+  }
 
   if (!response.ok) {
-    throw new Error(payload.detail || payload.message || 'Request failed.');
+    throw new Error(payload.detail || payload.message || `Request failed: ${response.status}`);
   }
 
   return payload;
@@ -172,6 +200,7 @@ function fillForm(data) {
 
 function renderWorkflowResult(result) {
   const triage = result?.triage || result?.data || {};
+  const calendar = result?.calendar || null;
 
   if (els.latestCategory) {
     els.latestCategory.textContent = triage.category || '—';
@@ -207,6 +236,44 @@ function renderWorkflowResult(result) {
     els.latestActions.innerHTML = items.length
       ? items.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join('')
       : '<span class="tag">No action items</span>';
+  }
+
+  if (els.calendarTriggered) {
+    els.calendarTriggered.textContent = result.calendar_triggered ? 'Yes' : 'No';
+  }
+
+  if (els.calendarStatus) {
+    if (!result.calendar_triggered) {
+      els.calendarStatus.textContent = 'Not a scheduling request';
+    } else {
+      els.calendarStatus.textContent = formatCalendarStatus(calendar?.status);
+    }
+  }
+
+  if (els.calendarScheduledTime) {
+    const scheduled =
+      calendar?.scheduled_time ||
+      calendar?.preferred_time ||
+      calendar?.details?.proposed_times?.[0] ||
+      null;
+
+    els.calendarScheduledTime.textContent =
+      scheduled ? new Date(scheduled).toLocaleString() : '—';
+  }
+
+  if (els.calendarEventLink) {
+    const link =
+      calendar?.calendar_event_link ||
+      calendar?.event_link ||
+      '';
+
+    if (link) {
+      els.calendarEventLink.textContent = 'Open Event';
+      els.calendarEventLink.href = link;
+    } else {
+      els.calendarEventLink.textContent = '—';
+      els.calendarEventLink.removeAttribute('href');
+    }
   }
 }
 

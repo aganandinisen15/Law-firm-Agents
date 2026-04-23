@@ -54,3 +54,21 @@ curl -X POST http://localhost:8012/run \
   -H "Content-Type: application/json" \
   -d @samples/request.json
 ```
+
+
+## Fixes included in this build
+- preferred date is honored first (for example, "schedule on 18th" schedules on the 18th if free)
+- correct Google Calendar time zone handling
+- correct availability window handling without invalid UTC suffixing
+- real Google event creation returns event ID and event link
+- Google Calendar auth is separated from Gmail draft auth so calendar creation still works even if Gmail compose scope is unavailable
+- clearer Google status reporting in overview API
+
+## OAuth scopes
+Generate the refresh token with at least this scope for live calendar creation:
+- `https://www.googleapis.com/auth/calendar`
+
+Optional Gmail draft support uses:
+- `https://www.googleapis.com/auth/gmail.compose`
+
+If you want only Calendar working first, use a refresh token that includes only the Calendar scope.

@@ -492,7 +492,6 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
     details = parse_request_text(payload.request_text)
     clients = GoogleWorkspaceClients.from_env()
 
-    # Use the actual request text from payload, not an undefined request object
     details.proposed_times = ensure_preferred_time_first(
         request_text=payload.request_text,
         proposed_times=details.proposed_times,
@@ -516,7 +515,6 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
     }
 
     if available_slots and payload.auto_create_event:
-        # First available slot should now be the user's preferred slot if free
         chosen = available_slots[0]
 
         event_info = clients.create_calendar_event(
@@ -529,20 +527,45 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
             add_video=(details.location == "video call"),
         )
 
-        # Match the keys returned by create_calendar_event()
-        result["status"] = "scheduled_google" if clients.enabled else "scheduled_local"
-        result["calendar_event_id"] = event_info.get("event_id")
-        result["calendar_event_link"] = event_info.get("event_link")
+        event_id = event_info.get("event_id")
+        event_link = event_info.get("event_link")
+
+        result["calendar_event_id"] = event_id
+        result["calendar_event_link"] = event_link
         result["scheduled_time"] = chosen["start"]
 
-        save_meeting(
-            details,
-            chosen["start"],
-            result["status"],
-            payload.source,
-            payload.matter_id,
-            event_info.get("event_id"),
-        )
+        if clients.enabled:
+            if not event_id:
+                result["status"] = "calendar_error"
+                result["error"] = "Google Calendar event was not created."
+                save_meeting(
+                    details,
+                    None,
+                    "calendar_error",
+                    payload.source,
+                    payload.matter_id,
+                    None,
+                )
+            else:
+                result["status"] = "scheduled_google"
+                save_meeting(
+                    details,
+                    chosen["start"],
+                    "scheduled_google",
+                    payload.source,
+                    payload.matter_id,
+                    event_id,
+                )
+        else:
+            result["status"] = "scheduled_local"
+            save_meeting(
+                details,
+                chosen["start"],
+                "scheduled_local",
+                payload.source,
+                payload.matter_id,
+                None,
+            )
 
     elif conflicts:
         base = datetime.fromisoformat(details.proposed_times[0])
