@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Priority Admin</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-badge">TP</div>
+        <div>
+          <div class="eyebrow">Admin Panel</div>
+          <h1>Task Priority</h1>
+        </div>
+      </div>
+
+      <div class="status-stack">
+        <span class="pill">Agent 03</span>
+        <span class="pill">Task Priority</span>
+        <span class="pill">Daily Planning</span>
+      </div>
+
+      <section class="side-card">
+        <div class="eyebrow">Purpose</div>
+        <p>
+          Manage the master task list, calculate task priority, generate a daily
+          plan, and review task routing from other agents.
+        </p>
+      </section>
+
+      <section class="side-card">
+        <div class="eyebrow">Workflow</div>
+        <ul class="side-list">
+          <li>Task intake from email, calendar, deadline, or manual input</li>
+          <li>Priority score calculation and storage</li>
+          <li>Daily Top 5 plan generation</li>
+          <li>Escalation and sync visibility</li>
+        </ul>
+      </section>
+    </aside>
+
+    <main class="main">
+      <div id="alertBar" class="alert hidden"></div>
+
+      <section class="hero card">
+        <div>
+          <div class="eyebrow">Operations Console</div>
+          <h2>Prioritize legal work and generate daily execution plans</h2>
+          <p>
+            Create tasks manually, review incoming work from other agents, and
+            generate a prioritized plan for the day.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button id="refreshOverviewBtn" class="btn btn-secondary" type="button">Refresh panel</button>
+          <button id="runDailyPlanBtn" class="btn btn-primary" type="button">Run daily plan</button>
+        </div>
+      </section>
+
+      <section class="metrics">
+        <article class="metric card">
+          <div class="metric-label">Pending Tasks</div>
+          <div id="metricPendingTasks" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">High Priority</div>
+          <div id="metricHighPriorityTasks" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">Overdue</div>
+          <div id="metricOverdueTasks" class="metric-value">0</div>
+        </article>
+        <article class="metric card">
+          <div class="metric-label">Total Tasks</div>
+          <div id="metricTotalTasks" class="metric-value">0</div>
+        </article>
+      </section>
+
+      <section class="grid-2">
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Manual Task Intake</div>
+              <h3>Create task</h3>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button class="btn btn-secondary sample-btn" type="button" data-sample="discovery">Discovery sample</button>
+            <button class="btn btn-secondary sample-btn" type="button" data-sample="meeting">Meeting prep sample</button>
+            <button class="btn btn-secondary sample-btn" type="button" data-sample="deadline">Deadline sample</button>
+          </div>
+
+          <form id="taskForm" class="form-stack">
+            <label class="field">
+              <span>Title</span>
+              <input id="taskTitle" type="text" placeholder="Review and respond to discovery requests" required />
+            </label>
+
+            <label class="field">
+              <span>Description</span>
+              <textarea id="taskDescription" rows="6" placeholder="Task description"></textarea>
+            </label>
+
+            <div class="form-grid">
+              <label class="field">
+                <span>Matter ID</span>
+                <input id="taskMatterId" type="number" placeholder="123" />
+              </label>
+
+              <label class="field">
+                <span>Due date</span>
+                <input id="taskDueDate" type="date" />
+              </label>
+            </div>
+
+            <div class="form-grid">
+              <label class="field">
+                <span>Source</span>
+                <input id="taskSource" type="text" placeholder="manual" value="manual" />
+              </label>
+
+              <label class="field">
+                <span>Assigned to</span>
+                <input id="taskAssignedTo" type="text" placeholder="Attorney name" />
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Tags (comma separated)</span>
+              <input id="taskTags" type="text" placeholder="discovery, deadline" />
+            </label>
+
+            <div class="button-row">
+              <button id="createTaskBtn" class="btn btn-primary" type="submit">Create task</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Latest Result</div>
+              <h3>Task outcome</h3>
+            </div>
+          </div>
+
+          <div class="summary-grid">
+            <article class="summary-box">
+              <span>Task ID</span>
+              <strong id="latestTaskId">—</strong>
+            </article>
+            <article class="summary-box">
+              <span>Priority Score</span>
+              <strong id="latestPriorityScore">—</strong>
+            </article>
+            <article class="summary-box">
+              <span>Status</span>
+              <strong id="latestTaskStatus">—</strong>
+            </article>
+            <article class="summary-box">
+              <span>Source</span>
+              <strong id="latestTaskSource">—</strong>
+            </article>
+          </div>
+
+          <div class="content-block">
+            <div class="eyebrow">Priority reasoning</div>
+            <p id="latestPriorityReasoning">No task processed yet.</p>
+          </div>
+
+          <div class="content-block">
+            <div class="eyebrow">Recommended deadline</div>
+            <p id="latestRecommendedDeadline">—</p>
+          </div>
+
+          <div class="content-block">
+            <div class="eyebrow">Task tags</div>
+            <div id="latestTaskTags" class="tag-row">
+              <span class="tag">No tags</span>
+            </div>
+          </div>
+
+          <div class="content-block">
+            <div class="eyebrow">Sheet sync</div>
+            <p id="latestSheetSync">—</p>
+          </div>
+
+          <div class="content-block">
+            <div class="eyebrow">Alert</div>
+            <p id="latestAlert">—</p>
+          </div>
+        </section>
+      </section>
+
+      <section class="grid-2">
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Daily Plan</div>
+              <h3>Top 5 for today</h3>
+            </div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Top 5 tasks</div>
+            <div id="dailyPlanTop5" class="feed-list"></div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Deferred tasks</div>
+            <div id="dailyPlanDeferred" class="feed-list"></div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Overdue tasks</div>
+            <div id="dailyPlanOverdue" class="feed-list"></div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Alerts</div>
+            <div id="dailyPlanAlerts" class="feed-list"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Operational Feeds</div>
+              <h3>Recent tasks</h3>
+            </div>
+          </div>
+
+          <div class="feed-block">
+            <div class="feed-title">Task list</div>
+            <div id="taskList" class="feed-list"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

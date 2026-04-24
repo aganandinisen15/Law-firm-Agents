@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS matters (
   opened_date DATE,
   status VARCHAR(50),
   billing_type VARCHAR(50),
-  priority_tier INT DEFAULT 2
+  priority_tier INT,
+  client_tier INT DEFAULT 3
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -22,7 +23,17 @@ CREATE TABLE IF NOT EXISTS tasks (
   source VARCHAR(100),
   parent_task_id INT REFERENCES tasks(task_id),
   completed_at TIMESTAMP,
-  tags TEXT[]
+  tags TEXT[],
+
+  priority_reasoning TEXT,
+  recommended_deadline DATE,
+  sheet_row_id VARCHAR(100),
+  last_synced_at TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT NOW(),
+  manual_priority_override INT,
+  manual_priority_note TEXT,
+  escalation_level INT DEFAULT 0,
+  last_escalated_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS email_log (

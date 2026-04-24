@@ -8,6 +8,10 @@ from sqlalchemy import text
 from shared.legal_agents.db import engine
 from shared.legal_agents.db_utils import log_audit, log_error
 from shared.legal_agents.schemas import GenericAgentRequest
+from .services.priority_engine import calculate_priority_score
+from .services.task_repository import get_matter, insert_task
+from .services.google_sheets import sync_task_to_sheet
+from .services.notifications import maybe_send_high_priority_alert
 
 AGENT_SLUG = "task_priority"
 
@@ -47,56 +51,43 @@ def _compute_score(tags: List[str], due_date: str | None, title: str) -> int:
     return min(score, 100)
 
 
-def process(request: GenericAgentRequest):
-    payload: Dict[str, Any] = request.payload
-    title = str(payload.get('title') or 'Follow up task').strip()
-    description = str(payload.get('description') or '').strip()
-    due_date = payload.get('due_date') or None
-    tags = _normalize_tags(payload.get('tags', []))
-    priority_score = _compute_score(tags, due_date, title)
-    correlation_id = request.correlation_id
+def process(request: GenericAgentRequest) -> dict[str, Any]:
+    payload = request.payload or {}
 
-    task_id = None
-    try:
-        with engine.begin() as conn:
-            row = conn.execute(
-                text(
-                    '''
-                    INSERT INTO tasks (title, description, due_date, priority_score, status, assigned_to, source, tags)
-                    VALUES (:title, :description, :due_date, :priority_score, :status, :assigned_to, :source, :tags)
-                    RETURNING task_id, created_at
-                    '''
-                ),
-                {
-                    'title': title,
-                    'description': description,
-                    'due_date': due_date,
-                    'priority_score': priority_score,
-                    'status': 'pending',
-                    'assigned_to': payload.get('assigned_to') or 'attorney',
-                    'source': payload.get('source') or 'dashboard',
-                    'tags': tags,
-                },
-            ).mappings().one()
-            task_id = row['task_id']
-        log_audit(AGENT_SLUG, 'task_created', correlation_id, {'task_id': task_id, 'title': title, 'priority_score': priority_score})
-    except Exception as exc:  # pragma: no cover
-        log_error(AGENT_SLUG, correlation_id, str(exc), payload)
-        return {
-            'summary': 'Task processing failed.',
-            'warnings': [str(exc)],
-            'title': title,
-            'priority_score': priority_score,
-            'recommended_deadline': due_date,
-        }
+    matter = get_matter(payload.get("matter_id"))
+    due_date = payload.get("due_date")
+    if due_date:
+        due_date = date.fromisoformat(due_date)
+
+    score_result = calculate_priority_score(
+        due_date=due_date,
+        matter_type=(matter or {}).get("matter_type"),
+        client_tier=(matter or {}).get("client_tier"),
+        tags=payload.get("tags", []),
+    )
+
+    task = {
+        "title": payload["title"],
+        "description": payload.get("description"),
+        "matter_id": payload.get("matter_id"),
+        "due_date": due_date,
+        "priority_score": score_result["priority_score"],
+        "status": payload.get("status", "pending"),
+        "assigned_to": payload.get("assigned_to"),
+        "source": payload.get("source", "manual"),
+        "parent_task_id": payload.get("parent_task_id"),
+        "tags": payload.get("tags", []),
+        "priority_reasoning": score_result["reasoning"],
+        "recommended_deadline": score_result["recommended_deadline"],
+    }
+
+    saved = insert_task(task)
+    sheet_result = sync_task_to_sheet(saved)
+    alert_result = maybe_send_high_priority_alert(saved)
 
     return {
-        'summary': 'Task created and prioritized.',
-        'task_id': task_id,
-        'title': title,
-        'priority_score': priority_score,
-        'recommended_deadline': due_date,
-        'today': str(date.today()),
-        'tags': tags,
-        'warnings': []
+        "status": "ok",
+        "task": saved,
+        "sheet_sync": sheet_result,
+        "alert": alert_result,
     }
