@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from asyncio import tasks
 import threading
 import time
 from datetime import datetime
@@ -13,7 +14,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
-from agents.agent_03_task_priority.app.processor import process as process_task
 from shared.legal_agents.adapters import GoogleWorkspaceAdapter
 from shared.legal_agents.base_agent import build_router
 from shared.legal_agents.db import engine
@@ -24,6 +24,20 @@ from .processor import process
 
 import re
 import requests
+
+TASK_AGENT_URL = "http://task-priority:8013/api/tasks/create"
+def create_task_from_email(payload: dict) -> dict:
+    try:
+        response = requests.post(TASK_AGENT_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print("Task Agent call failed:", e)
+        return {
+            "status": "task_agent_error",
+            "error": str(e),
+            "payload": payload,
+        }
 
 CALENDAR_AGENT_URL = "http://calendar-scheduling:8012/run"
 
@@ -353,13 +367,7 @@ def _workflow_result(payload: Dict[str, Any]) -> Dict[str, Any]:
             "tags": tags,
         }
 
-        task_result = process_task(
-            GenericAgentRequest(
-                payload=task_payload,
-                correlation_id=payload.get("email_id") or payload.get("gmail_message_id"),
-            )
-        )
-
+        task_result = create_task_from_email(task_payload)
         tasks.append(task_result)
 
     # ---------------- CALENDAR TRIGGER ----------------

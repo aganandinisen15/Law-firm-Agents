@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import uuid
+import requests
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 from .services.google_clients import GoogleWorkspaceClients
 
 IST = timezone(timedelta(hours=5, minutes=30))
+
+TASK_AGENT_URL = "http://task-priority:8013/api/tasks/create"
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("SCHEDULING_DB_PATH", BASE_DIR.parent / "calendar_agent.db"))
@@ -130,6 +133,18 @@ MONTHS = {
     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
 }
 
+def create_task_from_calendar(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        response = requests.post(TASK_AGENT_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as exc:
+        print("Task Agent call failed:", exc)
+        return {
+            "status": "task_agent_error",
+            "error": str(exc),
+            "payload": payload,
+        }
 
 def next_weekday(base: datetime, weekday: int) -> datetime:
     ahead = (weekday - base.weekday()) % 7
@@ -370,8 +385,6 @@ def check_availability(clients: GoogleWorkspaceClients, proposed_times: list[str
         )
     return results
 
-import re
-
 def contains_scheduling_request(subject: str, body: str) -> bool:
     text = f"{subject}\n{body}".lower()
 
@@ -512,6 +525,7 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
         "alternatives": [],
         "google_mode": clients.status(),
         "scheduled_time": None,
+        "prep_task": None,
     }
 
     if available_slots and payload.auto_create_event:
@@ -538,6 +552,7 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
             if not event_id:
                 result["status"] = "calendar_error"
                 result["error"] = "Google Calendar event was not created."
+
                 save_meeting(
                     details,
                     None,
@@ -546,8 +561,10 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
                     payload.matter_id,
                     None,
                 )
+
             else:
                 result["status"] = "scheduled_google"
+
                 save_meeting(
                     details,
                     chosen["start"],
@@ -556,8 +573,31 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
                     payload.matter_id,
                     event_id,
                 )
+
+                try:
+                    meeting_time = datetime.fromisoformat(chosen["start"])
+                    prep_due_date = (meeting_time - timedelta(days=1)).date().isoformat()
+
+                    prep_task_payload = {
+                        "title": f"Prepare for {details.title}",
+                        "description": "Prep task generated from scheduled meeting.",
+                        "matter_id": payload.matter_id,
+                        "due_date": prep_due_date,
+                        "source": "calendar_agent",
+                        "tags": ["meeting_prep", "client_request"],
+                    }
+
+                    result["prep_task"] = create_task_from_calendar(prep_task_payload)
+
+                except Exception as exc:
+                    result["prep_task"] = {
+                        "status": "task_creation_error",
+                        "error": str(exc),
+                    }
+
         else:
             result["status"] = "scheduled_local"
+
             save_meeting(
                 details,
                 chosen["start"],
@@ -566,6 +606,27 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
                 payload.matter_id,
                 None,
             )
+
+            try:
+                meeting_time = datetime.fromisoformat(chosen["start"])
+                prep_due_date = (meeting_time - timedelta(days=1)).date().isoformat()
+
+                prep_task_payload = {
+                    "title": f"Prepare for {details.title}",
+                    "description": "Prep task generated from locally scheduled meeting.",
+                    "matter_id": payload.matter_id,
+                    "due_date": prep_due_date,
+                    "source": "calendar_agent",
+                    "tags": ["meeting_prep", "client_request"],
+                }
+
+                result["prep_task"] = create_task_from_calendar(prep_task_payload)
+
+            except Exception as exc:
+                result["prep_task"] = {
+                    "status": "task_creation_error",
+                    "error": str(exc),
+                }
 
     elif conflicts:
         base = datetime.fromisoformat(details.proposed_times[0])

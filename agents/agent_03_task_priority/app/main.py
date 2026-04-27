@@ -7,10 +7,26 @@ from shared.legal_agents.schemas import GenericAgentRequest
 from .services.task_repository import list_pending_tasks, update_task
 from .services.planner import build_daily_plan
 
+from pathlib import Path
+from typing import Any
+
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
 configure_logging(settings.log_level)
 
 app = FastAPI(title="Task & Priority Management Agent", version="0.1.0")
 app.include_router(build_router("task_priority", "Task & Priority Management Agent", process))
+BASE_DIR = Path(__file__).resolve().parent
+
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request) -> Any:
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/health")
 def health():
