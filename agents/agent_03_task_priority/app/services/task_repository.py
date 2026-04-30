@@ -59,6 +59,18 @@ def list_pending_tasks() -> list[dict[str, Any]]:
 
     return [dict(r) for r in rows]
 
+def list_all_tasks() -> list[dict[str, Any]]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT *
+                FROM tasks
+                ORDER BY created_at DESC
+            """)
+        ).mappings().all()
+
+    return [dict(r) for r in rows]
+
 
 def update_task(task_id: int, updates: dict[str, Any]) -> None:
     set_parts = []

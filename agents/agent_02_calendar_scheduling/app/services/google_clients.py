@@ -64,19 +64,6 @@ class GoogleWorkspaceClients:
 
             # Gmail credentials (optional)
             gmail_service = None
-            try:
-                gmail_creds = Credentials(
-                    token=None,
-                    refresh_token=refresh_token,
-                    token_uri="https://oauth2.googleapis.com/token",
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    scopes=GMAIL_SCOPES,
-                )
-                gmail_creds.refresh(Request())
-                gmail_service = build("gmail", "v1", credentials=gmail_creds)
-            except Exception as e:
-                print("⚠️ Gmail not enabled:", str(e))
 
             return cls(
                 enabled=True,

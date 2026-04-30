@@ -3,43 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LexFlow Email Triage Admin</title>
+  <title>Law Agent Console</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <div class="layout">
+  <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-badge">LF</div>
+        <div class="brand-icon">LF</div>
         <div>
           <div class="eyebrow">Admin Panel</div>
-          <h1>Email Triage</h1>
+          <h1>Agents Console</h1>
         </div>
       </div>
 
-      <div class="status-stack">
-        <span class="pill">development</span>
-        <span class="pill">Fallback mode</span>
-        <span class="pill">Gmail API ready</span>
-      </div>
-
-      <section class="side-card">
-        <div class="eyebrow">Purpose</div>
-        <p>
-          Monitor Gmail, triage inbox emails server-side, route actions to tasks
-          and calendar, and keep attorney review in control.
-        </p>
-      </section>
-
-      <section class="side-card">
-        <div class="eyebrow">Automation rules</div>
-        <ul class="side-list">
-          <li>Only inbox items matching your Gmail query are checked.</li>
-          <li>Urgent emails trigger star + SMS alert when Twilio is configured.</li>
-          <li>Court emails create deadline records.</li>
-          <li>Drafts are created in Gmail for review.</li>
-        </ul>
-      </section>
+      <nav class="nav">
+        <a href="#email-section">Email Triage</a>
+        <a href="#calendar-section">Calendar</a>
+        <a href="#task-section">Task Priority</a>
+      </nav>
     </aside>
 
     <main class="main">
@@ -47,234 +29,220 @@
 
       <section class="hero card">
         <div>
-          <div class="eyebrow">Operations Console</div>
-          <h2>Gmail-triggered email triage without loading raw inbox emails into the UI</h2>
-          <p>
-            This admin panel controls the automation and shows processing results,
-            errors, and workflow outputs. The Gmail inbox stays in Gmail.
-          </p>
+          <div class="eyebrow">Unified Operations Console</div>
+          <h2>Email, Calendar, and Task Priority Agents</h2>
+          <p>Refresh one panel to retrieve categorized emails, calendar events, and updated tasks.</p>
         </div>
-        <div class="hero-actions">
-          <button id="runOnceBtn" class="btn btn-primary" type="button">Check latest inbox email now</button>
-          <button id="refreshOverviewBtn" class="btn btn-secondary" type="button">Refresh panel</button>
-        </div>
+        <button id="refreshAllBtn" class="btn primary">Refresh panel</button>
       </section>
 
       <section class="metrics">
-        <article class="metric card">
-          <div class="metric-label">Processed</div>
-          <div id="metricProcessed" class="metric-value">0</div>
-        </article>
-        <article class="metric card">
-          <div class="metric-label">Urgent</div>
-          <div id="metricUrgent" class="metric-value">0</div>
-        </article>
-        <article class="metric card">
-          <div class="metric-label">Drafts</div>
-          <div id="metricDrafts" class="metric-value">0</div>
-        </article>
-        <article class="metric card">
-          <div class="metric-label">Court</div>
-          <div id="metricCourt" class="metric-value">0</div>
-        </article>
-        <article class="metric card">
-          <div class="metric-label">Tasks</div>
-          <div id="metricTasks" class="metric-value">0</div>
-        </article>
-        <article class="metric card">
-          <div class="metric-label">Meetings</div>
-          <div id="metricMeetings" class="metric-value">0</div>
-        </article>
+        <div class="metric card">
+          <span>Processed Emails</span>
+          <strong id="metricEmails">0</strong>
+        </div>
+        <div class="metric card">
+          <span>Calendar Events</span>
+          <strong id="metricMeetings">0</strong>
+        </div>
+        <div class="metric card">
+          <span>Pending Tasks</span>
+          <strong id="metricTasks">0</strong>
+        </div>
       </section>
 
-      <section class="grid-2">
-        <section class="card">
-          <div class="section-head">
-            <div>
-              <div class="eyebrow">Automation Control</div>
-              <h3>Gmail watcher</h3>
-            </div>
-            <span id="watcherState" class="status-chip stopped">Stopped</span>
+      <!-- EMAIL TRIAGE -->
+      <section id="email-section" class="agent-section card">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">Agent 01</div>
+            <h3>Email Triage Agent</h3>
           </div>
+          <button id="runEmailWorkflowBtn" class="btn secondary">Run manual email</button>
+        </div>
 
-          <div class="form-grid">
-            <label class="field">
-              <span>Inbox query</span>
-              <input id="gmailQuery" type="text" value="in:inbox -category:promotions -category:social" />
+        <div class="grid-2">
+          <form id="emailForm" class="form">
+            <h4>Manual email input</h4>
+
+            <label>
+              From
+              <input id="emailFrom" type="email" placeholder="client@example.com" />
             </label>
 
-            <label class="field">
-              <span>Poll interval</span>
-              <select id="pollSeconds">
-                <option value="10">10 seconds</option>
-                <option value="15">15 seconds</option>
-                <option value="30" selected>30 seconds</option>
-                <option value="60">60 seconds</option>
-              </select>
-            </label>
-          </div>
-
-          <div class="button-row">
-            <button id="startWatcherBtn" class="btn btn-primary" type="button">Start automation</button>
-            <button id="stopWatcherBtn" class="btn btn-secondary" type="button">Stop automation</button>
-          </div>
-
-          <div class="kv-list">
-            <div class="kv-row"><span>Mailbox user</span><strong id="gmailMailbox">me</strong></div>
-            <div class="kv-row"><span>Last checked</span><strong id="lastChecked">—</strong></div>
-            <div class="kv-row"><span>Last processed</span><strong id="lastProcessed">—</strong></div>
-            <div class="kv-row"><span>Session processed</span><strong id="sessionProcessed">0</strong></div>
-            <div class="kv-row"><span>Gmail configured</span><strong id="gmailConfigured">—</strong></div>
-            <div class="kv-row"><span>Default query</span><strong id="defaultQuery">—</strong></div>
-            <div class="kv-row"><span>Last error</span><strong id="lastError">None</strong></div>
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="section-head">
-            <div>
-              <div class="eyebrow">Result Summary</div>
-              <h3>Latest run</h3>
-            </div>
-          </div>
-
-          <div class="summary-grid">
-            <article class="summary-box">
-              <span>Category</span>
-              <strong id="latestCategory">—</strong>
-            </article>
-            <article class="summary-box">
-              <span>Urgency</span>
-              <strong id="latestUrgency">—</strong>
-            </article>
-            <article class="summary-box">
-              <span>Response required</span>
-              <strong id="latestResponse">—</strong>
-            </article>
-            <article class="summary-box">
-              <span>Routes</span>
-              <strong id="latestRoutes">—</strong>
-            </article>
-          </div>
-
-          <div class="content-block">
-            <div class="eyebrow">Summary</div>
-            <p id="latestSummary">No workflow has been run yet.</p>
-          </div>
-
-          <div class="content-block">
-            <div class="eyebrow">Draft response</div>
-            <pre id="latestDraft" class="pre-box">No draft generated.</pre>
-          </div>
-
-          <div class="content-block">
-            <div class="eyebrow">Action items</div>
-            <div id="latestActions" class="tag-row">
-              <span class="tag">No action items</span>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <section class="grid-2">
-        <section class="card">
-          <div class="section-head">
-            <div>
-              <div class="eyebrow">Manual Testing</div>
-              <h3>Simulation form</h3>
-            </div>
-          </div>
-
-          <div class="button-row">
-            <button class="btn btn-secondary sample-btn" type="button" data-sample="urgent">Urgent sample</button>
-            <button class="btn btn-secondary sample-btn" type="button" data-sample="court">Court sample</button>
-            <button class="btn btn-secondary sample-btn" type="button" data-sample="schedule">Schedule sample</button>
-          </div>
-
-          <div class="button-row">
-            <button id="manualTriageBtn" class="btn btn-secondary" type="button">Triage only</button>
-          </div>
-
-          <form id="manualForm" class="form-stack">
-            <label class="field">
-              <span>From</span>
-              <input id="manualFrom" type="email" placeholder="sender@example.com" required />
+            <label>
+              Subject
+              <input id="emailSubject" type="text" placeholder="SCHEDULE: Client call" />
             </label>
 
-            <label class="field">
-              <span>Subject</span>
-              <input id="manualSubject" type="text" placeholder="Email subject" required />
+            <label>
+              Body
+              <textarea id="emailBody" rows="7" placeholder="Paste email body here"></textarea>
             </label>
 
-            <label class="field">
-              <span>Body</span>
-              <textarea id="manualBody" rows="8" placeholder="Paste email body here" required></textarea>
+            <label class="checkbox">
+              <input id="emailAttachments" type="checkbox" />
+              Has attachments
             </label>
 
-            <label class="checkbox-row">
-              <input id="manualAttachments" type="checkbox" />
-              <span>Has attachments</span>
-            </label>
-
-            <div class="button-row">
-              <button id="manualWorkflowBtn" class="btn btn-primary" type="submit">Run full workflow</button>
-            </div>
+            <button class="btn primary" type="submit">Process email</button>
           </form>
-        </section>
 
-        <section class="card">
-          <div class="section-head">
-            <div>
-              <div class="eyebrow">Operational Feeds</div>
-              <h3>Recent activity</h3>
+          <div>
+            <h4>Latest email result</h4>
+            <div class="result-grid">
+              <div><span>Category</span><strong id="latestEmailCategory">—</strong></div>
+              <div><span>Urgency</span><strong id="latestEmailUrgency">—</strong></div>
+              <div><span>Response</span><strong id="latestEmailResponse">—</strong></div>
+              <div><span>Calendar</span><strong id="latestEmailCalendar">—</strong></div>
             </div>
+            <p id="latestEmailSummary" class="muted">No email processed yet.</p>
           </div>
+        </div>
 
-          <div class="feed-block">
-            <div class="feed-title">Processed emails</div>
-            <div id="processedList" class="feed-list"></div>
+        <h4>Categorized emails</h4>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Subject</th>
+                <th>Sender</th>
+                <th>Category</th>
+                <th>Urgency</th>
+                <th>Processed</th>
+              </tr>
+            </thead>
+            <tbody id="categorizedEmailTable"></tbody>
+          </table>
+        </div>
+
+        <h4>Categorized email list</h4>
+        <div id="categorizedEmailList" class="list"></div>
+      </section>
+
+      <!-- CALENDAR -->
+      <section id="calendar-section" class="agent-section card">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">Agent 02</div>
+            <h3>Calendar Agent</h3>
           </div>
+          <button id="runCalendarBtn" class="btn secondary">Schedule event</button>
+        </div>
 
-          <div class="feed-block">
-            <div class="feed-title">Tasks</div>
-            <div id="taskList" class="feed-list"></div>
+        <div class="grid-2">
+          <form id="calendarForm" class="form">
+            <h4>Manual calendar event</h4>
+
+            <label>
+              Scheduling request
+              <textarea id="calendarRequest" rows="7" placeholder="Schedule meeting on 25th April 2026 at 3 PM with client@example.com. Video call preferred."></textarea>
+            </label>
+
+            <label>
+              Requester email
+              <input id="calendarRequester" type="email" placeholder="client@example.com" />
+            </label>
+
+            <label>
+              Matter ID
+              <input id="calendarMatterId" type="text" placeholder="Optional" />
+            </label>
+
+            <label class="checkbox">
+              <input id="calendarAutoCreate" type="checkbox" checked />
+              Auto-create Google Calendar event
+            </label>
+
+            <button class="btn primary" type="submit">Create calendar event</button>
+          </form>
+
+          <div>
+            <h4>Latest scheduling result</h4>
+            <div class="result-grid">
+              <div><span>Status</span><strong id="latestCalendarStatus">—</strong></div>
+              <div><span>Time</span><strong id="latestCalendarTime">—</strong></div>
+              <div><span>Event ID</span><strong id="latestCalendarEventId">—</strong></div>
+              <div><span>Prep Task</span><strong id="latestCalendarPrepTask">—</strong></div>
+            </div>
+            <a id="latestCalendarLink" class="link" target="_blank" rel="noopener">—</a>
           </div>
+        </div>
 
-          <!-- CALENDAR RESULT PANEL -->
-          <div class="content-block">
-            <div class="eyebrow">Calendar</div>
+        <h4>Listed calendar events</h4>
+        <div id="calendarEventList" class="list"></div>
 
-            <p>
-              <strong>Triggered:</strong>
-              <span id="calendarTriggered">—</span>
-            </p>
+        <h4>Scheduled email messages / runs</h4>
+        <div id="scheduledEmailMessages" class="list"></div>
+      </section>
 
-            <p>
-              <strong>Status:</strong>
-              <span id="calendarStatus">—</span>
-            </p>
-
-            <p>
-              <strong>Scheduled Time:</strong>
-              <span id="calendarScheduledTime">—</span>
-            </p>
-
-            <p>
-              <strong>Event Link:</strong>
-              <a id="calendarEventLink" href="#" target="_blank" rel="noopener">—</a>
-            </p>
+      <!-- TASK PRIORITY -->
+      <section id="task-section" class="agent-section card">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">Agent 03</div>
+            <h3>Task Priority Agent</h3>
           </div>
+          <button id="runDailyPlanBtn" class="btn secondary">Run daily plan</button>
+        </div>
 
-          <div class="feed-block">
-            <div class="feed-title">Meetings</div>
-            <div id="meetingList" class="feed-list"></div>
-          </div>
+        <div class="grid-2">
+          <form id="taskForm" class="form">
+            <h4>Manual task creation</h4>
 
-          <div class="feed-block">
-            <div class="feed-title">Errors</div>
-            <div id="errorList" class="feed-list"></div>
+            <label>
+              Title
+              <input id="taskTitle" type="text" placeholder="Prepare court filing" />
+            </label>
+
+            <label>
+              Description
+              <textarea id="taskDescription" rows="5" placeholder="Task description"></textarea>
+            </label>
+
+            <label>
+              Matter ID
+              <input id="taskMatterId" type="number" placeholder="Optional" />
+            </label>
+
+            <label>
+              Due date
+              <input id="taskDueDate" type="date" />
+            </label>
+
+            <label>
+              Source
+              <input id="taskSource" type="text" value="manual" />
+            </label>
+
+            <label>
+              Tags
+              <input id="taskTags" type="text" placeholder="court, deadline, urgent" />
+            </label>
+
+            <button class="btn primary" type="submit">Create task</button>
+          </form>
+
+          <div>
+            <h4>Latest task result</h4>
+            <div class="result-grid">
+              <div><span>Task ID</span><strong id="latestTaskId">—</strong></div>
+              <div><span>Priority</span><strong id="latestTaskPriority">—</strong></div>
+              <div><span>Status</span><strong id="latestTaskStatus">—</strong></div>
+              <div><span>Source</span><strong id="latestTaskSource">—</strong></div>
+            </div>
+            <p id="latestTaskReasoning" class="muted">No task created yet.</p>
           </div>
-        </section>
+        </div>
+
+        <h4>Task priority listing</h4>
+        <div id="taskPriorityList" class="list"></div>
+
+        <h4>Emails list</h4>
+        <div id="taskEmailList" class="list"></div>
+
+        <h4>Daily plan</h4>
+        <div id="dailyPlanList" class="list"></div>
       </section>
     </main>
   </div>

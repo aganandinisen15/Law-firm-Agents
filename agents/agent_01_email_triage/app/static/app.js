@@ -1,83 +1,70 @@
-const API_BASE = window.location.origin;
-
-const SAMPLE_DATA = {
-  urgent: {
-    from: 'client@example.com',
-    subject: 'URGENT: Need review before tomorrow hearing',
-    body: 'We have a hearing tomorrow morning. Please review the attached materials and let me know next steps today.',
-    attachments: true,
-  },
-  court: {
-    from: 'notifications@court.gov',
-    subject: 'Court notice and response deadline',
-    body: 'Please take notice that responses are due on 2026-04-21. The hearing has been calendared.',
-    attachments: true,
-  },
-  schedule: {
-    from: 'client@example.com',
-    subject: 'SCHEDULE: Client call',
-    body: 'Please schedule a meeting on 25th April 2026 at 3 PM with client@example.com. Video call preferred.',
-    attachments: false,
-  },
+const API = {
+  email: 'http://localhost:8011',
+  calendar: 'http://localhost:8012',
+  task: 'http://localhost:8013',
 };
 
 const els = {
   alertBar: document.getElementById('alertBar'),
+  refreshAllBtn: document.getElementById('refreshAllBtn'),
 
-  refreshOverviewBtn: document.getElementById('refreshOverviewBtn'),
-  runOnceBtn: document.getElementById('runOnceBtn'),
-  startWatcherBtn: document.getElementById('startWatcherBtn'),
-  stopWatcherBtn: document.getElementById('stopWatcherBtn'),
-  manualTriageBtn: document.getElementById('manualTriageBtn'),
-
-  watcherState: document.getElementById('watcherState'),
-  gmailQuery: document.getElementById('gmailQuery'),
-  pollSeconds: document.getElementById('pollSeconds'),
-  gmailMailbox: document.getElementById('gmailMailbox'),
-  lastChecked: document.getElementById('lastChecked'),
-  lastProcessed: document.getElementById('lastProcessed'),
-  sessionProcessed: document.getElementById('sessionProcessed'),
-  gmailConfigured: document.getElementById('gmailConfigured'),
-  defaultQuery: document.getElementById('defaultQuery'),
-  lastError: document.getElementById('lastError'),
-
-  metricProcessed: document.getElementById('metricProcessed'),
-  metricUrgent: document.getElementById('metricUrgent'),
-  metricDrafts: document.getElementById('metricDrafts'),
-  metricCourt: document.getElementById('metricCourt'),
-  metricTasks: document.getElementById('metricTasks'),
+  metricEmails: document.getElementById('metricEmails'),
   metricMeetings: document.getElementById('metricMeetings'),
+  metricTasks: document.getElementById('metricTasks'),
 
-  latestCategory: document.getElementById('latestCategory'),
-  latestUrgency: document.getElementById('latestUrgency'),
-  latestResponse: document.getElementById('latestResponse'),
-  latestRoutes: document.getElementById('latestRoutes'),
-  latestSummary: document.getElementById('latestSummary'),
-  latestDraft: document.getElementById('latestDraft'),
-  latestActions: document.getElementById('latestActions'),
+  emailForm: document.getElementById('emailForm'),
+  emailFrom: document.getElementById('emailFrom'),
+  emailSubject: document.getElementById('emailSubject'),
+  emailBody: document.getElementById('emailBody'),
+  emailAttachments: document.getElementById('emailAttachments'),
+  runEmailWorkflowBtn: document.getElementById('runEmailWorkflowBtn'),
+  latestEmailCategory: document.getElementById('latestEmailCategory'),
+  latestEmailUrgency: document.getElementById('latestEmailUrgency'),
+  latestEmailResponse: document.getElementById('latestEmailResponse'),
+  latestEmailCalendar: document.getElementById('latestEmailCalendar'),
+  latestEmailSummary: document.getElementById('latestEmailSummary'),
+  categorizedEmailTable: document.getElementById('categorizedEmailTable'),
+  categorizedEmailList: document.getElementById('categorizedEmailList'),
 
-  processedList: document.getElementById('processedList'),
-  taskList: document.getElementById('taskList'),
-  meetingList: document.getElementById('meetingList'),
-  errorList: document.getElementById('errorList'),
+  calendarForm: document.getElementById('calendarForm'),
+  calendarRequest: document.getElementById('calendarRequest'),
+  calendarRequester: document.getElementById('calendarRequester'),
+  calendarMatterId: document.getElementById('calendarMatterId'),
+  calendarAutoCreate: document.getElementById('calendarAutoCreate'),
+  runCalendarBtn: document.getElementById('runCalendarBtn'),
+  latestCalendarStatus: document.getElementById('latestCalendarStatus'),
+  latestCalendarTime: document.getElementById('latestCalendarTime'),
+  latestCalendarEventId: document.getElementById('latestCalendarEventId'),
+  latestCalendarPrepTask: document.getElementById('latestCalendarPrepTask'),
+  latestCalendarLink: document.getElementById('latestCalendarLink'),
+  calendarEventList: document.getElementById('calendarEventList'),
+  scheduledEmailMessages: document.getElementById('scheduledEmailMessages'),
 
-  manualForm: document.getElementById('manualForm'),
-  manualFrom: document.getElementById('manualFrom'),
-  manualSubject: document.getElementById('manualSubject'),
-  manualBody: document.getElementById('manualBody'),
-  manualAttachments: document.getElementById('manualAttachments'),
-
-  calendarStatus: document.getElementById('calendarStatus'),
-  calendarTriggered: document.getElementById('calendarTriggered'),
-  calendarScheduledTime: document.getElementById('calendarScheduledTime'),
-  calendarEventLink: document.getElementById('calendarEventLink'),
+  taskForm: document.getElementById('taskForm'),
+  taskTitle: document.getElementById('taskTitle'),
+  taskDescription: document.getElementById('taskDescription'),
+  taskMatterId: document.getElementById('taskMatterId'),
+  taskDueDate: document.getElementById('taskDueDate'),
+  taskSource: document.getElementById('taskSource'),
+  taskTags: document.getElementById('taskTags'),
+  runDailyPlanBtn: document.getElementById('runDailyPlanBtn'),
+  latestTaskId: document.getElementById('latestTaskId'),
+  latestTaskPriority: document.getElementById('latestTaskPriority'),
+  latestTaskStatus: document.getElementById('latestTaskStatus'),
+  latestTaskSource: document.getElementById('latestTaskSource'),
+  latestTaskReasoning: document.getElementById('latestTaskReasoning'),
+  taskPriorityList: document.getElementById('taskPriorityList'),
+  taskEmailList: document.getElementById('taskEmailList'),
+  dailyPlanList: document.getElementById('dailyPlanList'),
 };
 
-const state = {
-  timer: null,
-  loading: false,
-  lastProcessedAt: null,
-};
+let refreshInProgress = false;
+let refreshTimer = null;
+
+function debounceRefresh(delay = 400) {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => refreshAll(true), delay);
+}
 
 function escapeHtml(value = '') {
   return String(value)
@@ -97,434 +84,367 @@ function formatDate(value) {
   }
 }
 
-function formatCalendarStatus(status) {
-  switch (status) {
-    case 'scheduled_google':
-      return 'Scheduled (Google Calendar)';
-    case 'scheduled_local':
-      return 'Scheduled (Local)';
-    case 'conflict':
-      return 'Conflict – alternatives generated';
-    case 'calendar_error':
-      return 'Error while scheduling';
-    default:
-      return status || '—';
-  }
-}
-
 function showAlert(message, type = 'error') {
-  if (!els.alertBar) return;
   els.alertBar.textContent = message || '';
   els.alertBar.className = `alert ${type}`;
 }
 
 function clearAlert() {
-  if (!els.alertBar) return;
   els.alertBar.textContent = '';
   els.alertBar.className = 'alert hidden';
 }
 
-function setButtonsDisabled(disabled) {
-  [
-    els.refreshOverviewBtn,
-    els.runOnceBtn,
-    els.startWatcherBtn,
-    els.stopWatcherBtn,
-    els.manualTriageBtn,
-  ].forEach((btn) => {
-    if (btn) btn.disabled = disabled;
+async function api(base, path, options = {}) {
+  const response = await fetch(`${base}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    ...options,
   });
 
-  const submitBtn = document.querySelector('#manualForm button[type="submit"]');
-  if (submitBtn) submitBtn.disabled = disabled;
-}
-
-async function api(url, options = {}) {
-  let response;
+  const text = await response.text();
+  let data = {};
 
   try {
-    response = await fetch(`${API_BASE}${url}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.headers || {}),
-      },
-      ...options,
-    });
-  } catch (err) {
-    console.error('Network error:', err);
-    throw new Error('Cannot connect to backend.');
-  }
-
-  const rawText = await response.text();
-  let payload = {};
-  try {
-    payload = rawText ? JSON.parse(rawText) : {};
+    data = text ? JSON.parse(text) : {};
   } catch {
-    payload = { detail: rawText || 'Unknown server response' };
+    data = { detail: text };
   }
 
   if (!response.ok) {
-    throw new Error(payload.detail || payload.message || `Request failed: ${response.status}`);
+    throw new Error(data.detail || data.message || `Request failed: ${response.status}`);
   }
 
-  return payload;
+  return data;
 }
 
-function renderList(items, target, template, emptyMessage) {
+function renderList(target, items, template, empty = 'No records yet.') {
   if (!target) return;
 
   if (!items || !items.length) {
-    target.innerHTML = `<div class="item"><p>${escapeHtml(emptyMessage)}</p></div>`;
+    target.innerHTML = `<div class="item muted">${escapeHtml(empty)}</div>`;
     return;
   }
 
   target.innerHTML = items.map(template).join('');
 }
 
-function manualPayload() {
-  return {
-    from: els.manualFrom?.value?.trim() || '',
-    subject: els.manualSubject?.value?.trim() || '',
-    body: els.manualBody?.value?.trim() || '',
-    attachments: els.manualAttachments?.checked ? [{ filename: 'attachment.pdf' }] : [],
-    metadata: { source: 'admin_panel_manual' },
+function parseTags(value) {
+  return String(value || '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+/* EMAIL */
+
+async function loadEmail() {
+  await api(API.email, '/api/admin/automation/run-once', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+
+  const overview = await api(API.email, '/api/admin/overview');
+  const history = await api(API.email, '/api/history?limit=20');
+
+  const metrics = overview.metrics || {};
+  els.metricEmails.textContent = metrics.emails?.total_processed || 0;
+
+  const emails = Array.isArray(history) ? history : history.items || [];
+
+  if (els.categorizedEmailTable) {
+    els.categorizedEmailTable.innerHTML = emails.length
+      ? emails.map((email) => `
+        <tr>
+          <td>${escapeHtml(email.subject || '(No subject)')}</td>
+          <td>${escapeHtml(email.sender || email.from || '—')}</td>
+          <td>${escapeHtml(email.category || '—')}</td>
+          <td>${escapeHtml(email.urgency_score ?? '0')}</td>
+          <td>${formatDate(email.processed_at || email.created_at)}</td>
+        </tr>
+      `).join('')
+      : `<tr><td colspan="5">No categorized emails yet.</td></tr>`;
+  }
+
+  renderList(
+    els.categorizedEmailList,
+    emails,
+    (email) => `
+      <article class="item">
+        <h5>${escapeHtml(email.subject || '(No subject)')}</h5>
+        <p>
+          ${escapeHtml(email.sender || email.from || '—')}
+          · ${escapeHtml(email.category || '—')}
+          · Urgency ${escapeHtml(email.urgency_score ?? '0')}
+        </p>
+        <small>${formatDate(email.processed_at || email.created_at)}</small>
+      </article>
+    `,
+    'No categorized emails yet.'
+  );
+}
+
+async function processManualEmail() {
+  const payload = {
+    from: els.emailFrom.value.trim(),
+    subject: els.emailSubject.value.trim(),
+    body: els.emailBody.value.trim(),
+    attachments: els.emailAttachments.checked ? [{ filename: 'attachment.pdf' }] : [],
   };
-}
 
-function fillForm(data) {
-  if (els.manualFrom) els.manualFrom.value = data.from || '';
-  if (els.manualSubject) els.manualSubject.value = data.subject || '';
-  if (els.manualBody) els.manualBody.value = data.body || '';
-  if (els.manualAttachments) els.manualAttachments.checked = !!data.attachments;
-}
-
-function renderWorkflowResult(result) {
-  const triage = result?.triage || result?.data || {};
-  const calendar = result?.calendar || null;
-
-  if (els.latestCategory) {
-    els.latestCategory.textContent = triage.category || '—';
-  }
-
-  if (els.latestUrgency) {
-    els.latestUrgency.textContent = triage.urgency_score ? `${triage.urgency_score}/10` : '—';
-  }
-
-  if (els.latestResponse) {
-    els.latestResponse.textContent = triage.requires_response ? 'Yes' : 'No';
-  }
-
-  const routes = [];
-  if (result?.routing?.task_count) routes.push(`${result.routing.task_count} task(s)`);
-  if (result?.routing?.calendar_triggered) routes.push('calendar');
-  if (result?.routing?.deadline_triggered) routes.push('deadline');
-
-  if (els.latestRoutes) {
-    els.latestRoutes.textContent = routes.length ? routes.join(' · ') : 'None';
-  }
-
-  if (els.latestSummary) {
-    els.latestSummary.textContent = result?.summary || triage.key_points || 'Workflow complete.';
-  }
-
-  if (els.latestDraft) {
-    els.latestDraft.textContent = triage.draft_response || 'No draft generated.';
-  }
-
-  if (els.latestActions) {
-    const items = triage.action_items || [];
-    els.latestActions.innerHTML = items.length
-      ? items.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join('')
-      : '<span class="tag">No action items</span>';
-  }
-
-  if (els.calendarTriggered) {
-    els.calendarTriggered.textContent = result.calendar_triggered ? 'Yes' : 'No';
-  }
-
-  if (els.calendarStatus) {
-    if (!result.calendar_triggered) {
-      els.calendarStatus.textContent = 'Not a scheduling request';
-    } else {
-      els.calendarStatus.textContent = formatCalendarStatus(calendar?.status);
-    }
-  }
-
-  if (els.calendarScheduledTime) {
-    const scheduled =
-      calendar?.scheduled_time ||
-      calendar?.preferred_time ||
-      calendar?.details?.proposed_times?.[0] ||
-      null;
-
-    els.calendarScheduledTime.textContent =
-      scheduled ? new Date(scheduled).toLocaleString() : '—';
-  }
-
-  if (els.calendarEventLink) {
-    const link =
-      calendar?.calendar_event_link ||
-      calendar?.event_link ||
-      '';
-
-    if (link) {
-      els.calendarEventLink.textContent = 'Open Event';
-      els.calendarEventLink.href = link;
-    } else {
-      els.calendarEventLink.textContent = '—';
-      els.calendarEventLink.removeAttribute('href');
-    }
-  }
-}
-
-function updateWatcherLoop(seconds = 15) {
-  if (state.timer) {
-    clearInterval(state.timer);
-  }
-
-  const intervalMs = Math.max(5000, Number(seconds || 15) * 1000);
-
-  state.timer = setInterval(() => {
-    if (!document.hidden) {
-      loadOverview({ silent: true });
-    }
-  }, intervalMs);
-}
-
-async function loadOverview({ silent = false } = {}) {
-  if (state.loading) return;
-  state.loading = true;
-
-  try {
-    const overview = await api('/api/admin/overview');
-    const metrics = overview.metrics || {};
-    const watcher = overview.watcher || {};
-    const gmail = overview.gmail || {};
-
-    if (
-      state.lastProcessedAt &&
-      watcher.last_processed_at &&
-      state.lastProcessedAt !== watcher.last_processed_at
-    ) {
-      showAlert('New processing result received. Panel updated.', 'success');
-    }
-
-    state.lastProcessedAt = watcher.last_processed_at || state.lastProcessedAt;
-
-    if (els.metricProcessed) els.metricProcessed.textContent = metrics.emails?.total_processed || 0;
-    if (els.metricUrgent) els.metricUrgent.textContent = metrics.emails?.urgent_count || 0;
-    if (els.metricDrafts) els.metricDrafts.textContent = metrics.emails?.drafts_created || 0;
-    if (els.metricCourt) els.metricCourt.textContent = metrics.emails?.court_count || 0;
-    if (els.metricTasks) els.metricTasks.textContent = metrics.tasks?.total_tasks || 0;
-    if (els.metricMeetings) els.metricMeetings.textContent = metrics.meetings?.total_meetings || 0;
-
-    if (els.watcherState) {
-      els.watcherState.textContent = watcher.running ? 'Running' : 'Stopped';
-      els.watcherState.className = `status-chip ${watcher.running ? 'running' : 'stopped'}`;
-    }
-
-    if (els.gmailMailbox) els.gmailMailbox.textContent = gmail.mailbox_user || 'me';
-    if (els.lastChecked) els.lastChecked.textContent = formatDate(watcher.last_checked_at);
-    if (els.lastProcessed) els.lastProcessed.textContent = formatDate(watcher.last_processed_at);
-    if (els.sessionProcessed) els.sessionProcessed.textContent = watcher.processed_session_count || 0;
-    if (els.gmailConfigured) els.gmailConfigured.textContent = gmail.configured ? 'Yes' : 'No';
-    if (els.defaultQuery) els.defaultQuery.textContent = watcher.query || gmail.default_query || '—';
-    if (els.lastError) els.lastError.textContent = watcher.last_error || 'None';
-
-    if (els.gmailQuery && watcher.query) {
-      els.gmailQuery.value = watcher.query;
-    }
-
-    if (els.pollSeconds && watcher.poll_seconds) {
-      els.pollSeconds.value = String(watcher.poll_seconds);
-    }
-
-    renderList(
-      overview.recent_processed || [],
-      els.processedList,
-      (item) => `
-        <article class="item">
-          <h4>${escapeHtml(item.subject || '(No subject)')}</h4>
-          <p>${escapeHtml(item.sender || 'Unknown sender')} · ${escapeHtml(item.category || '—')} · urgency ${escapeHtml(item.urgency_score || '0')}</p>
-          <small>${formatDate(item.processed_at)}</small>
-        </article>
-      `,
-      'No processed emails yet.'
-    );
-
-    renderList(
-      overview.recent_tasks || [],
-      els.taskList,
-      (item) => `
-        <article class="item">
-          <h4>${escapeHtml(item.title || '(Untitled task)')}</h4>
-          <p>Priority ${escapeHtml(item.priority_score || '0')} · ${escapeHtml(item.status || 'pending')}</p>
-          <small>${formatDate(item.created_at)}</small>
-        </article>
-      `,
-      'No routed tasks yet.'
-    );
-
-    renderList(
-      overview.recent_meetings || [],
-      els.meetingList,
-      (item) => `
-        <article class="item">
-          <h4>${escapeHtml(item.title || '(Untitled meeting)')}</h4>
-          <p>${escapeHtml(item.status || 'scheduled')} · ${formatDate(item.scheduled_time)}</p>
-          <small>${formatDate(item.created_at)}</small>
-        </article>
-      `,
-      'No routed meetings yet.'
-    );
-
-    renderList(
-      overview.recent_errors || [],
-      els.errorList,
-      (item) => `
-        <article class="item">
-          <h4>${escapeHtml(item.agent_slug || 'agent')}</h4>
-          <p>${escapeHtml(item.error_message || 'Unknown error')}</p>
-          <small>${formatDate(item.created_at)}</small>
-        </article>
-      `,
-      'No recent errors.'
-    );
-
-    updateWatcherLoop(watcher.running ? watcher.poll_seconds || 30 : 15);
-
-    if (!silent) clearAlert();
-  } catch (error) {
-    if (!silent) showAlert(error.message);
-  } finally {
-    state.loading = false;
-  }
-}
-
-async function startWatcher() {
-  const payload = await api('/api/admin/automation/start', {
+  const result = await api(API.email, '/api/admin/manual/workflow', {
     method: 'POST',
-    body: JSON.stringify({
-      query: els.gmailQuery?.value || '',
-      poll_seconds: Number(els.pollSeconds?.value || 30),
-    }),
-  });
-  showAlert('Automation started.', 'success');
-  return payload;
-}
-
-async function stopWatcher() {
-  const payload = await api('/api/admin/automation/stop', {
-    method: 'POST',
-  });
-  showAlert('Automation stopped.', 'success');
-  return payload;
-}
-
-async function runOnce() {
-  const payload = await api('/api/admin/automation/run-once', {
-    method: 'POST',
-    body: JSON.stringify({
-      query: els.gmailQuery?.value || '',
-      poll_seconds: Number(els.pollSeconds?.value || 30),
-    }),
+    body: JSON.stringify(payload),
   });
 
-  if (payload.processed && payload.workflow) {
-    renderWorkflowResult(payload.workflow);
-    showAlert('Latest inbox email processed successfully.', 'success');
+  const triage = result.triage || {};
+
+  els.latestEmailCategory.textContent = triage.category || '—';
+  els.latestEmailUrgency.textContent = triage.urgency_score ? `${triage.urgency_score}/10` : '—';
+  els.latestEmailResponse.textContent = triage.requires_response ? 'Yes' : 'No';
+  els.latestEmailCalendar.textContent = result.calendar_triggered ? (result.calendar?.status || 'Triggered') : 'No';
+  els.latestEmailSummary.textContent = triage.key_points || result.summary || 'Email processed.';
+
+  return result;
+}
+
+/* CALENDAR */
+
+async function loadCalendar() {
+  const overview = await api(API.calendar, '/api/overview');
+  const metrics = overview.metrics || {};
+
+  els.metricMeetings.textContent = metrics.meetings_total || 0;
+
+  renderList(
+    els.calendarEventList,
+    overview.meetings || [],
+    (meeting) => `
+      <article class="item">
+        <h5>${escapeHtml(meeting.title || '(Untitled meeting)')}</h5>
+        <p>${escapeHtml(meeting.status || '—')} · ${formatDate(meeting.scheduled_time)} · ${escapeHtml(meeting.calendar_event_id || 'no event id')}</p>
+      </article>
+    `,
+    'No calendar events yet.'
+  );
+
+  renderList(
+    els.scheduledEmailMessages,
+    overview.runs || [],
+    (run) => `
+      <article class="item">
+        <h5>${escapeHtml(run.status || 'run')}</h5>
+        <p>${escapeHtml(run.request_text || '').slice(0, 180)}</p>
+        <small>${formatDate(run.created_at)}</small>
+      </article>
+    `,
+    'No scheduled email messages/runs yet.'
+  );
+}
+
+async function createCalendarEvent() {
+  const payload = {
+    request_text: els.calendarRequest.value.trim(),
+    requester_email: els.calendarRequester.value.trim() || null,
+    matter_id: els.calendarMatterId.value.trim() || null,
+    source: 'unified_dashboard',
+    auto_create_event: els.calendarAutoCreate.checked,
+  };
+
+  const result = await api(API.calendar, '/run', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  els.latestCalendarStatus.textContent = result.status || '—';
+  els.latestCalendarTime.textContent = formatDate(result.scheduled_time || result.preferred_time);
+  els.latestCalendarEventId.textContent = result.calendar_event_id || '—';
+  els.latestCalendarPrepTask.textContent = result.prep_task?.task?.task_id || result.prep_task?.status || '—';
+
+  const link = result.calendar_event_link || '';
+  if (link) {
+    els.latestCalendarLink.textContent = 'Open Google Calendar Event';
+    els.latestCalendarLink.href = link;
   } else {
-    showAlert('No new unprocessed inbox email matched the Gmail query.', 'success');
+    els.latestCalendarLink.textContent = 'No event link';
+    els.latestCalendarLink.removeAttribute('href');
   }
 
-  return payload;
+  return result;
 }
 
-async function runManual(endpoint) {
-  const payload = await api(endpoint, {
+/* TASKS */
+
+async function loadTasks() {
+  const overview = await api(API.task, '/api/overview');
+  const tasks = overview.tasks || overview.items || [];
+
+  els.metricTasks.textContent =
+    overview.metrics?.total_tasks ||
+    overview.metrics?.pending_tasks ||
+    tasks.length ||
+    0;
+
+  renderList(
+    els.taskPriorityList,
+    tasks,
+    (task) => `
+      <article class="item">
+        <h5>${escapeHtml(task.title || '(Untitled task)')}</h5>
+        <p>
+          Score ${escapeHtml(task.manual_priority_override || task.priority_score || 0)}
+          · ${escapeHtml(task.status || 'pending')}
+          · Due ${escapeHtml(task.due_date || '—')}
+        </p>
+        <small>
+          Source: ${escapeHtml(task.source || 'manual')}
+          · Created: ${formatDate(task.created_at)}
+        </small>
+      </article>
+    `,
+    'No tasks yet.'
+  );
+}
+
+async function createTask() {
+  const matterId = els.taskMatterId.value.trim();
+
+  const payload = {
+    title: els.taskTitle.value.trim(),
+    description: els.taskDescription.value.trim(),
+    matter_id: matterId ? Number(matterId) : null,
+    due_date: els.taskDueDate.value || null,
+    source: els.taskSource.value.trim() || 'manual',
+    tags: parseTags(els.taskTags.value),
+  };
+
+  const result = await api(API.task, '/api/tasks/create', {
     method: 'POST',
-    body: JSON.stringify(manualPayload()),
+    body: JSON.stringify(payload),
   });
 
-  renderWorkflowResult(payload.data ? { data: payload.data, summary: payload.summary } : payload);
-  showAlert(endpoint.includes('workflow') ? 'Manual workflow completed.' : 'Manual triage completed.', 'success');
+  const task = result.task || {};
 
-  return payload;
+  els.latestTaskId.textContent = task.task_id || '—';
+  els.latestTaskPriority.textContent = task.priority_score ?? '—';
+  els.latestTaskStatus.textContent = task.status || '—';
+  els.latestTaskSource.textContent = task.source || '—';
+  els.latestTaskReasoning.textContent = task.priority_reasoning || 'Task created.';
+
+  return result;
 }
 
-function bindClick(el, handler) {
-  if (!el) return;
-  el.addEventListener('click', async () => {
-    try {
-      setButtonsDisabled(true);
-      await handler();
-      await loadOverview();
-    } catch (error) {
-      showAlert(error.message);
-    } finally {
-      setButtonsDisabled(false);
-    }
+async function runDailyPlan() {
+  const result = await api(API.task, '/api/daily-plan/run', {
+    method: 'POST',
   });
+
+  const plan = result.plan || {};
+
+  renderList(
+    els.dailyPlanList,
+    plan.top_5_tasks || [],
+    (task) => `
+      <article class="item">
+        <h5>${escapeHtml(task.title || '(Untitled task)')}</h5>
+        <p>${escapeHtml(task.estimated_time || '—')} · ${escapeHtml(task.why_priority || '')}</p>
+      </article>
+    `,
+    'No daily plan generated.'
+  );
+
+  return result;
 }
 
-bindClick(els.refreshOverviewBtn, async () => {
-  clearAlert();
-  await loadOverview();
-});
+/* REFRESH */
 
-bindClick(els.startWatcherBtn, async () => {
-  await startWatcher();
-});
+async function refreshAll(silent = false) {
+  if (refreshInProgress) return;
 
-bindClick(els.stopWatcherBtn, async () => {
-  await stopWatcher();
-});
+  refreshInProgress = true;
 
-bindClick(els.runOnceBtn, async () => {
-  await runOnce();
-});
+  if (!silent) clearAlert();
 
-bindClick(els.manualTriageBtn, async () => {
-  await runManual('/api/admin/manual/triage');
-});
+  const [emailResult, calendarResult, taskResult] = await Promise.allSettled([
+    loadEmail(),
+    loadCalendar(),
+    loadTasks(),
+  ]);
 
-if (els.manualForm) {
-  els.manualForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    try {
-      setButtonsDisabled(true);
-      await runManual('/api/admin/manual/workflow');
-      await loadOverview();
-    } catch (error) {
-      showAlert(error.message);
-    } finally {
-      setButtonsDisabled(false);
-    }
-  });
-}
+  refreshInProgress = false;
 
-document.querySelectorAll('.sample-btn').forEach((button) => {
-  button.addEventListener('click', () => {
-    const sample = SAMPLE_DATA[button.dataset.sample];
-    if (sample) fillForm(sample);
-  });
-});
+  const failed = [emailResult, calendarResult, taskResult].filter(
+    (result) => result.status === 'rejected'
+  );
 
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    loadOverview({ silent: true });
+  if (failed.length && !silent) {
+    showAlert(`Refresh completed with ${failed.length} error(s).`);
+    return;
   }
-});
 
-(async function init() {
+  if (!silent) {
+    showAlert('Panel refreshed.', 'success');
+  }
+}
+
+els.refreshAllBtn.addEventListener('click', async () => {
   try {
-    const health = await api('/health');
-    if (health.status !== 'ok') {
-      showAlert('Backend health check failed.');
-      return;
-    }
-    await loadOverview();
+    await refreshAll(false);
   } catch (error) {
     showAlert(error.message);
   }
-})();
+});
+
+els.emailForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await processManualEmail();
+    debounceRefresh();
+    showAlert('Email workflow completed.', 'success');
+  } catch (error) {
+    showAlert(error.message);
+  }
+});
+
+els.runEmailWorkflowBtn.addEventListener('click', async () => {
+  els.emailForm.requestSubmit();
+});
+
+els.calendarForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await createCalendarEvent();
+    debounceRefresh();
+    showAlert('Calendar workflow completed.', 'success');
+  } catch (error) {
+    showAlert(error.message);
+  }
+});
+
+els.runCalendarBtn.addEventListener('click', async () => {
+  els.calendarForm.requestSubmit();
+});
+
+els.taskForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await createTask();
+    debounceRefresh();
+    showAlert('Task created.', 'success');
+  } catch (error) {
+    showAlert(error.message);
+  }
+});
+
+els.runDailyPlanBtn.addEventListener('click', async () => {
+  try {
+    await runDailyPlan();
+    debounceRefresh();
+    showAlert('Daily plan generated.', 'success');
+  } catch (error) {
+    showAlert(error.message);
+  }
+});
+
+refreshAll(true);

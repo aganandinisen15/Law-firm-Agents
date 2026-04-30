@@ -25,7 +25,12 @@ from .processor import process
 import re
 import requests
 
-TASK_AGENT_URL = "http://task-priority:8013/api/tasks/create"
+import os
+
+TASK_AGENT_URL = os.getenv(
+    "TASK_AGENT_URL",
+    "http://localhost:8013/api/tasks/create"
+)
 def create_task_from_email(payload: dict) -> dict:
     try:
         response = requests.post(TASK_AGENT_URL, json=payload, timeout=10)
@@ -39,7 +44,10 @@ def create_task_from_email(payload: dict) -> dict:
             "payload": payload,
         }
 
-CALENDAR_AGENT_URL = "http://calendar-scheduling:8012/run"
+CALENDAR_AGENT_URL = os.getenv(
+    "CALENDAR_AGENT_URL",
+    "http://localhost:8012/run"
+)
 
 configure_logging(settings.log_level)
 

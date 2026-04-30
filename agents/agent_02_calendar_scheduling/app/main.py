@@ -20,9 +20,14 @@ from pydantic import BaseModel, Field
 
 from .services.google_clients import GoogleWorkspaceClients
 
+import os
+
 IST = timezone(timedelta(hours=5, minutes=30))
 
-TASK_AGENT_URL = "http://task-priority:8013/api/tasks/create"
+TASK_AGENT_URL = os.getenv(
+    "TASK_AGENT_URL",
+    "http://localhost:8013/api/tasks/create"
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("SCHEDULING_DB_PATH", BASE_DIR.parent / "calendar_agent.db"))
@@ -37,8 +42,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
 
 class ScheduleRequest(BaseModel):
     request_text: str = Field(..., description="Original scheduling email or request")
@@ -155,7 +158,7 @@ def next_weekday(base: datetime, weekday: int) -> datetime:
 
 def infer_hour_minute(text: str) -> tuple[int, int]:
     lower = text.lower()
-    explicit = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)", lower)
+    explicit = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", lower)
     if explicit:
         hh = int(explicit.group(1)) % 12
         mm = int(explicit.group(2) or 0)
@@ -473,11 +476,6 @@ def health() -> dict[str, str]:
     return {"status": "ok", "agent": "calendar_scheduling"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request) -> Any:
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
 @app.get("/api/overview")
 def overview() -> dict[str, Any]:
     conn = get_db()
@@ -656,3 +654,7 @@ def run_agent(payload: ScheduleRequest) -> dict[str, Any]:
 
     save_run_log(payload.request_text, details.model_dump(), result, result["status"])
     return result
+
+@app.post("/api/calendar/schedule")
+def schedule_calendar(payload: ScheduleRequest) -> dict[str, Any]:
+    return run_agent(payload)

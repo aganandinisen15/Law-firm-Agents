@@ -4,8 +4,10 @@ from shared.legal_agents.logging_utils import configure_logging
 from shared.legal_agents.settings import settings
 from .processor import process
 from shared.legal_agents.schemas import GenericAgentRequest
-from .services.task_repository import list_pending_tasks, update_task
+from .services.task_repository import list_pending_tasks, list_all_tasks, update_task
 from .services.planner import build_daily_plan
+
+from fastapi.middleware.cors import CORSMiddleware
 
 from pathlib import Path
 from typing import Any
@@ -18,15 +20,17 @@ from fastapi.templating import Jinja2Templates
 configure_logging(settings.log_level)
 
 app = FastAPI(title="Task & Priority Management Agent", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(build_router("task_priority", "Task & Priority Management Agent", process))
 BASE_DIR = Path(__file__).resolve().parent
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request) -> Any:
-    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/health")
 def health():
@@ -35,15 +39,28 @@ def health():
 @app.post("/api/tasks/create")
 def create_task(payload: dict):
     try:
-        return process(GenericAgentRequest(payload=payload))
+        result = process(GenericAgentRequest(payload=payload))
+
+        return {
+            "status": "ok",
+            "task": result.get("task"),
+            "sheet_sync": result.get("sheet_sync"),
+            "alert": result.get("alert"),
+        }
+
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        print("Task creation error:", exc)
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Task creation failed: {str(exc)}"
+        )
 
 @app.get("/api/tasks")
 def get_tasks():
     return {
         "status": "ok",
-        "items": list_pending_tasks(),
+        "items": list_all_tasks(),
     }
 
 @app.patch("/api/tasks/{task_id}")
@@ -56,22 +73,30 @@ def daily_plan():
     tasks = list_pending_tasks()
     todays_meetings = []
     hours_available = 6.0
-    plan = build_daily_plan(tasks, todays_meetings, hours_available)
-    return {"status": "ok", "plan": plan}
+
+    plan = build_daily_plan(
+        tasks=tasks,
+        todays_meetings=todays_meetings,
+        hours_available=hours_available,
+    )
+
+    return {
+        "status": "ok",
+        "plan": plan,
+    }
 
 @app.get("/api/overview")
 def overview():
-    tasks = list_pending_tasks()
-    overdue_count = 0
-    high_priority_count = sum(1 for t in tasks if (t.get("priority_score") or 0) > 80)
+    tasks = list_all_tasks()
 
     return {
         "status": "ok",
         "metrics": {
-            "pending_tasks": len(tasks),
-            "high_priority_tasks": high_priority_count,
-            "overdue_tasks": overdue_count,
+            "pending_tasks": len([t for t in tasks if t.get("status") == "pending"]),
+            "high_priority_tasks": len([t for t in tasks if (t.get("priority_score") or 0) >= 80]),
+            "overdue_tasks": 0,
+            "total_tasks": len(tasks),
         },
-        "tasks": tasks[:10],
+        "tasks": tasks,
     }
 
