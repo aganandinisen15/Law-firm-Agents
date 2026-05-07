@@ -1,14 +1,6 @@
 {
-  "correlation_id": "document_organization-sample-001",
-  "payload": {
-    "filename": "motion.pdf",
-    "client_name": "Smith Co",
-    "matter_name": "Smith v Jones",
-    "document_type": "motion",
-    "document_date": "2026-01-15",
-    "description": "SummaryJudgment"
-  },
-  "metadata": {
-    "source": "manual"
-  }
+  "filename": "Initial Complaint.pdf",
+  "file_type": "pdf",
+  "extracted_text": "Client: Smith Family Holdings\nSmith Family Holdings v. Jones Development LLC\nCase No. 2026-CV-1001\nComplaint filed April 15, 2026. Defendant must respond by 2026-05-15.",
+  "source": "manual_upload"
 }

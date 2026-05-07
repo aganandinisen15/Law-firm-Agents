@@ -2,6 +2,7 @@ const API = {
   email: 'http://localhost:8011',
   calendar: 'http://localhost:8012',
   task: 'http://localhost:8013',
+  document: 'http://localhost:8014',
 };
 
 const els = {
@@ -11,6 +12,7 @@ const els = {
   metricEmails: document.getElementById('metricEmails'),
   metricMeetings: document.getElementById('metricMeetings'),
   metricTasks: document.getElementById('metricTasks'),
+  metricDocuments: document.getElementById('metricDocuments'),
 
   emailForm: document.getElementById('emailForm'),
   emailFrom: document.getElementById('emailFrom'),
@@ -56,6 +58,21 @@ const els = {
   taskPriorityList: document.getElementById('taskPriorityList'),
   taskEmailList: document.getElementById('taskEmailList'),
   dailyPlanList: document.getElementById('dailyPlanList'),
+
+  documentForm: document.getElementById('documentForm'),
+  documentFilename: document.getElementById('documentFilename'),
+  documentFileType: document.getElementById('documentFileType'),
+  documentText: document.getElementById('documentText'),
+  documentClient: document.getElementById('documentClient'),
+  documentMatter: document.getElementById('documentMatter'),
+  runDocumentBtn: document.getElementById('runDocumentBtn'),
+  latestDocumentId: document.getElementById('latestDocumentId'),
+  latestDocumentType: document.getElementById('latestDocumentType'),
+  latestDocumentConfidence: document.getElementById('latestDocumentConfidence'),
+  latestDocumentDeadline: document.getElementById('latestDocumentDeadline'),
+  latestDocumentSummary: document.getElementById('latestDocumentSummary'),
+  latestDocumentPath: document.getElementById('latestDocumentPath'),
+  documentList: document.getElementById('documentList'),
 };
 
 let refreshInProgress = false;
@@ -139,19 +156,26 @@ function parseTags(value) {
 
 /* EMAIL */
 
-async function loadEmail() {
-  await api(API.email, '/api/admin/automation/run-once', {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
+async function syncLatestEmail() {
+  try {
+    return await api(API.email, '/api/admin/automation/run-once', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    console.warn('Latest email sync failed:', error);
+    return null;
+  }
+}
 
+async function loadEmail() {
   const overview = await api(API.email, '/api/admin/overview');
   const history = await api(API.email, '/api/history?limit=20');
 
   const metrics = overview.metrics || {};
-  els.metricEmails.textContent = metrics.emails?.total_processed || 0;
+  const emails = Array.isArray(history) ? history : history.items || history.emails || [];
 
-  const emails = Array.isArray(history) ? history : history.items || [];
+  els.metricEmails.textContent = metrics.emails?.total_processed || emails.length || 0;
 
   if (els.categorizedEmailTable) {
     els.categorizedEmailTable.innerHTML = emails.length
@@ -173,18 +197,37 @@ async function loadEmail() {
     (email) => `
       <article class="item">
         <h5>${escapeHtml(email.subject || '(No subject)')}</h5>
-        <p>
-          ${escapeHtml(email.sender || email.from || '—')}
-          · ${escapeHtml(email.category || '—')}
-          · Urgency ${escapeHtml(email.urgency_score ?? '0')}
-        </p>
+        <p>${escapeHtml(email.sender || email.from || '—')} · ${escapeHtml(email.category || '—')} · Urgency ${escapeHtml(email.urgency_score ?? '0')}</p>
         <small>${formatDate(email.processed_at || email.created_at)}</small>
       </article>
     `,
     'No categorized emails yet.'
   );
-}
 
+  const emailTasks = emails
+    .filter((email) => email.action_items)
+    .flatMap((email) => {
+      let items = email.action_items;
+      if (typeof items === 'string') {
+        try { items = JSON.parse(items); } catch { items = [items]; }
+      }
+      if (!Array.isArray(items)) items = [];
+      return items.map((item) => ({ title: item, subject: email.subject, created_at: email.processed_at }));
+    });
+
+  renderList(
+    els.taskEmailList,
+    emailTasks,
+    (task) => `
+      <article class="item">
+        <h5>${escapeHtml(task.title || 'Email task')}</h5>
+        <p>${escapeHtml(task.subject || '—')}</p>
+        <small>${formatDate(task.created_at)}</small>
+      </article>
+    `,
+    'No email-generated task items yet.'
+  );
+}
 async function processManualEmail() {
   const payload = {
     from: els.emailFrom.value.trim(),
@@ -357,24 +400,71 @@ async function runDailyPlan() {
   return result;
 }
 
+
+/* DOCUMENTS */
+
+async function loadDocuments() {
+  const overview = await api(API.document, '/api/overview');
+  const documents = overview.recent_documents || overview.items || [];
+  const metrics = overview.metrics || {};
+  if (els.metricDocuments) els.metricDocuments.textContent = metrics.total_documents || documents.length || 0;
+  renderList(
+    els.documentList,
+    documents,
+    (doc) => `
+      <article class="item">
+        <h5>${escapeHtml(doc.filename || '(Untitled document)')}</h5>
+        <p>${escapeHtml(doc.doc_type || 'misc')} · ${escapeHtml(doc.client_name || 'Unknown Client')} · ${escapeHtml(doc.matter_name || 'Unknown Matter')}</p>
+        <small>${escapeHtml(doc.file_path || '')}</small>
+      </article>
+    `,
+    'No documents filed yet.'
+  );
+}
+
+async function fileDocument() {
+  const payload = {
+    filename: els.documentFilename.value.trim() || 'document.pdf',
+    file_type: els.documentFileType.value.trim() || 'pdf',
+    extracted_text: els.documentText.value.trim(),
+    client_name: els.documentClient.value.trim() || null,
+    matter_name: els.documentMatter.value.trim() || null,
+    source: 'unified_dashboard',
+  };
+  const result = await api(API.document, '/api/documents/file', { method: 'POST', body: JSON.stringify(payload) });
+  const analysis = result.document_analysis || {};
+  els.latestDocumentId.textContent = result.doc_id || '—';
+  els.latestDocumentType.textContent = result.document_type || analysis.document_type || '—';
+  els.latestDocumentConfidence.textContent = analysis.confidence_score ? `${analysis.confidence_score}/10` : '—';
+  els.latestDocumentDeadline.textContent = result.deadline_triggered ? (analysis.deadline_date || 'Triggered') : 'No';
+  els.latestDocumentSummary.textContent = result.summary || 'Document processed.';
+  els.latestDocumentPath.textContent = result.file_path || result.target_folder || '—';
+  return result;
+}
+
 /* REFRESH */
 
-async function refreshAll(silent = false) {
+async function refreshAll(silent = false, processLatestEmail = false) {
   if (refreshInProgress) return;
 
   refreshInProgress = true;
 
   if (!silent) clearAlert();
 
-  const [emailResult, calendarResult, taskResult] = await Promise.allSettled([
+  if (processLatestEmail) {
+    await syncLatestEmail();
+  }
+
+  const [emailResult, calendarResult, taskResult, documentResult] = await Promise.allSettled([
     loadEmail(),
     loadCalendar(),
     loadTasks(),
+    loadDocuments(),
   ]);
 
   refreshInProgress = false;
 
-  const failed = [emailResult, calendarResult, taskResult].filter(
+  const failed = [emailResult, calendarResult, taskResult, documentResult].filter(
     (result) => result.status === 'rejected'
   );
 
@@ -390,7 +480,7 @@ async function refreshAll(silent = false) {
 
 els.refreshAllBtn.addEventListener('click', async () => {
   try {
-    await refreshAll(false);
+    await refreshAll(false, true);
   } catch (error) {
     showAlert(error.message);
   }
@@ -447,4 +537,24 @@ els.runDailyPlanBtn.addEventListener('click', async () => {
   }
 });
 
-refreshAll(true);
+
+if (els.documentForm) {
+  els.documentForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await fileDocument();
+      debounceRefresh();
+      showAlert('Document filed.', 'success');
+    } catch (error) {
+      showAlert(error.message);
+    }
+  });
+}
+
+if (els.runDocumentBtn && els.documentForm) {
+  els.runDocumentBtn.addEventListener('click', async () => {
+    els.documentForm.requestSubmit();
+  });
+}
+
+refreshAll(true, true);

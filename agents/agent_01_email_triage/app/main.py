@@ -49,6 +49,34 @@ CALENDAR_AGENT_URL = os.getenv(
     "http://localhost:8012/run"
 )
 
+DOCUMENT_AGENT_URL = os.getenv(
+    "DOCUMENT_AGENT_URL",
+    "http://localhost:8014/api/documents/file"
+)
+def send_attachment_to_document_agent(attachment: dict, email_payload: dict, triage_response: dict) -> dict:
+    try:
+        payload = {
+            "original_filename": attachment.get("filename") or "email_attachment.pdf",
+            "file_type": attachment.get("mime_type") or attachment.get("file_type") or "pdf",
+            "extracted_text": attachment.get("extracted_text") or email_payload.get("body") or "",
+            "source": "email_attachment",
+            "email_subject": email_payload.get("subject"),
+            "sender": email_payload.get("from") or email_payload.get("sender"),
+            "triage_category": triage_response.get("category"),
+            "urgency_score": triage_response.get("urgency_score"),
+        }
+
+        response = requests.post(DOCUMENT_AGENT_URL, json=payload, timeout=30)
+        response.raise_for_status()
+        return response.json()
+
+    except Exception as exc:
+        return {
+            "status": "document_agent_error",
+            "error": str(exc),
+            "attachment": attachment,
+        }
+
 configure_logging(settings.log_level)
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -352,6 +380,18 @@ def _workflow_result(payload: Dict[str, Any]) -> Dict[str, Any]:
     body = payload.get("body", "") or ""
     sender = payload.get("from") or payload.get("sender") or ""
 
+    #---------------- DOCUMENT FILING ----------------
+
+    documents: List[Dict[str, Any]] = []
+
+    for attachment in payload.get("attachments", []):
+        document_result = send_attachment_to_document_agent(
+            attachment=attachment,
+            email_payload=payload,
+            triage_response=triage_response,
+        )
+        documents.append(document_result)
+
     # ---------------- TASK CREATION ----------------
     tasks: List[Dict[str, Any]] = []
 
@@ -411,14 +451,16 @@ def _workflow_result(payload: Dict[str, Any]) -> Dict[str, Any]:
     # ---------------- FINAL RESPONSE ----------------
     return {
         "status": "ok",
-        "summary": "Workflow processed with triage, tasks, deadlines, and scheduling.",
+        "summary": "Workflow processed with triage, tasks, deadlines, documents, and scheduling.",
         "triage": triage_response,
         "tasks": tasks,
+        "documents": documents,
         "calendar_triggered": calendar_triggered,
         "calendar": calendar_result,
         "deadline": deadline_result,
         "routing": {
             "task_count": len(tasks),
+            "document_count": len(documents),
             "calendar_triggered": calendar_triggered,
             "deadline_triggered": deadline_result is not None,
             "requires_response": triage_response.get("requires_response", False),
@@ -472,6 +514,30 @@ def _recent_tasks(limit: int = 8) -> List[Dict[str, Any]]:
             {"limit": limit},
         ).mappings().all()
     return [dict(row) for row in rows]
+
+def send_attachment_to_document_agent(attachment: dict, email_payload: dict, triage_response: dict) -> dict:
+    try:
+        payload = {
+            "original_filename": attachment.get("filename") or "email_attachment.pdf",
+            "file_type": attachment.get("mime_type") or attachment.get("file_type") or "pdf",
+            "extracted_text": attachment.get("extracted_text") or email_payload.get("body") or "",
+            "source": "email_attachment",
+            "email_subject": email_payload.get("subject"),
+            "sender": email_payload.get("from") or email_payload.get("sender"),
+            "triage_category": triage_response.get("category"),
+            "urgency_score": triage_response.get("urgency_score"),
+        }
+
+        response = requests.post(DOCUMENT_AGENT_URL, json=payload, timeout=30)
+        response.raise_for_status()
+        return response.json()
+
+    except Exception as exc:
+        return {
+            "status": "document_agent_error",
+            "error": str(exc),
+            "attachment": attachment,
+        }
 
 
 @app.get("/", response_class=HTMLResponse)

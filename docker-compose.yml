@@ -63,6 +63,7 @@ services:
       PYTHONPATH: /app
       CALENDAR_AGENT_URL: http://calendar-scheduling:8012/run
       TASK_AGENT_URL: http://task-priority:8013/api/tasks/create
+      DOCUMENT_AGENT_URL: http://document-organization:8014/api/documents/file
     command: uvicorn agents.agent_01_email_triage.app.main:app --host 0.0.0.0 --port 8011
     ports:
       - "8011:8011"
@@ -121,6 +122,9 @@ services:
       AGENT_SLUG: document_organization
       AGENT_PORT: 8014
       PYTHONPATH: /app
+      DEADLINE_AGENT_URL: http://deadline-tracking:8016/run
+      DOCUMENT_LOCAL_DRIVE_ROOT: /app/document_drive
+      DOCUMENT_ROOT_FOLDER: Law Firm Documents
     command: uvicorn agents.agent_04_document_organization.app.main:app --host 0.0.0.0 --port 8014
     ports:
       - "8014:8014"

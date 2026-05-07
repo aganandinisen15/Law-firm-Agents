@@ -21,6 +21,7 @@
         <a href="#email-section">Email Triage</a>
         <a href="#calendar-section">Calendar</a>
         <a href="#task-section">Task Priority</a>
+        <a href="#document-section">Document Organization</a>
       </nav>
     </aside>
 
@@ -30,8 +31,8 @@
       <section class="hero card">
         <div>
           <div class="eyebrow">Unified Operations Console</div>
-          <h2>Email, Calendar, and Task Priority Agents</h2>
-          <p>Refresh one panel to retrieve categorized emails, calendar events, and updated tasks.</p>
+          <h2>Email, Calendar, Task Priority, and Document Organization Agents</h2>
+          <p>Refresh one panel to retrieve categorized emails, calendar events, updated tasks, and filed documents.</p>
         </div>
         <button id="refreshAllBtn" class="btn primary">Refresh panel</button>
       </section>
@@ -48,6 +49,10 @@
         <div class="metric card">
           <span>Pending Tasks</span>
           <strong id="metricTasks">0</strong>
+        </div>
+        <div class="metric card">
+          <span>Filed Documents</span>
+          <strong id="metricDocuments">0</strong>
         </div>
       </section>
 
@@ -243,6 +248,44 @@
 
         <h4>Daily plan</h4>
         <div id="dailyPlanList" class="list"></div>
+      </section>
+
+      <!-- DOCUMENT ORGANIZATION -->
+      <section id="document-section" class="agent-section card">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">Agent 04</div>
+            <h3>Document Organization Agent</h3>
+          </div>
+          <button id="runDocumentBtn" class="btn secondary">File document</button>
+        </div>
+
+        <div class="grid-2">
+          <form id="documentForm" class="form">
+            <h4>Manual document filing</h4>
+            <label>Original filename<input id="documentFilename" type="text" placeholder="Initial Complaint.pdf" /></label>
+            <label>File type<input id="documentFileType" type="text" value="pdf" /></label>
+            <label>First pages / extracted text<textarea id="documentText" rows="7" placeholder="Paste first 2 pages or OCR text here"></textarea></label>
+            <label>Client name override<input id="documentClient" type="text" placeholder="Optional" /></label>
+            <label>Matter name override<input id="documentMatter" type="text" placeholder="Optional" /></label>
+            <button class="btn primary" type="submit">Classify and file document</button>
+          </form>
+
+          <div>
+            <h4>Latest document result</h4>
+            <div class="result-grid">
+              <div><span>Doc ID</span><strong id="latestDocumentId">—</strong></div>
+              <div><span>Type</span><strong id="latestDocumentType">—</strong></div>
+              <div><span>Confidence</span><strong id="latestDocumentConfidence">—</strong></div>
+              <div><span>Deadline</span><strong id="latestDocumentDeadline">—</strong></div>
+            </div>
+            <p id="latestDocumentSummary" class="muted">No document filed yet.</p>
+            <p class="muted"><strong>Path:</strong> <span id="latestDocumentPath">—</span></p>
+          </div>
+        </div>
+
+        <h4>Recently filed documents</h4>
+        <div id="documentList" class="list"></div>
       </section>
     </main>
   </div>
