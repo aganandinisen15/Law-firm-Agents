@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: legal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-legal_agents}
+      POSTGRES_USER: ${POSTGRES_USER:-legal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-legal}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-legal} -d ${POSTGRES_DB:-legal_agents}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    image: n8nio/n8n:1.76.1
+    container_name: legal-n8n
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-legal_agents}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-legal}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-legal}
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: ${N8N_PORT:-5678}
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-false}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-change_me}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change_this}
+      GENERIC_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+    ports:
+      - "5678:5678"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+
+  unified-legal-agent:
+    build:
+      context: .
+      dockerfile: shared/Dockerfile
+    container_name: unified-legal-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AGENT_SLUG: unified_legal_operations
+      AGENT_PORT: 8011
+      PYTHONPATH: /app
+      # These aliases point to the same single container for compatibility only.
+      CALENDAR_AGENT_URL: http://localhost:8011/api/calendar/schedule
+      TASK_AGENT_URL: http://localhost:8011/api/tasks/create
+      DOCUMENT_AGENT_URL: http://localhost:8011/api/documents/file
+    command: uvicorn agents.unified_legal_operations.app.main:app --host 0.0.0.0 --port 8011
+    ports:
+      - "8011:8011"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  n8n_data:
